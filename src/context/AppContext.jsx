@@ -17,16 +17,23 @@ import {
   buildProgressSnapshot,
   DEFAULT_USER_PROGRESS,
   getAllUsersDirectory,
+  getLeaderboardForTrack,
+  getGlobalLeaderboard,
+  getStoredQuests,
+  saveStoredQuests,
   updateRegisteredUserById,
   updateUserProgressFields,
   deleteRegisteredUserById,
   normalizeRole,
   isAdminRole,
+  EMPTY_TRACK_STATS,
+  ALL_TRACKS as STORAGE_TRACKS,
+  getRegisteredUsers,
 } from '../utils/storage';
 
 const AppContext = createContext(null);
 
-const ALL_TRACKS = ['C#', 'Java', 'Python'];
+const ALL_TRACKS = STORAGE_TRACKS;
 
 export const AppProvider = ({ children }) => {
   const [isHydrated, setIsHydrated] = useState(false);
@@ -47,17 +54,15 @@ export const AppProvider = ({ children }) => {
   };
 
   const [user, setUser] = useState({ ...DEFAULT_USER_PROGRESS.user });
+  const [welcomeBonusClaimed, setWelcomeBonusClaimed] = useState(false);
   const [lastHeartRegenTime, setLastHeartRegenTime] = useState(Date.now());
   const [timeUntilNextHeart, setTimeUntilNextHeart] = useState(0);
 
   const [unlockedLanguages, setUnlockedLanguages] = useState([]);
   const [activeProgrammingLanguage, setActiveProgrammingLanguage] = useState(null);
 
-  const [quests, setQuests] = useState({
-    'C#': initialQuestsCSharp,
-    Java: initialQuestsJava,
-    Python: initialQuestsPython,
-  });
+  // Global shared quests state (loaded from LocalStorage)
+  const [quests, setQuests] = useState({});
 
   const [completedQuests, setCompletedQuests] = useState({
     'C#': [],
@@ -65,13 +70,15 @@ export const AppProvider = ({ children }) => {
     Python: [],
   });
 
+  const [trackStats, setTrackStats] = useState(EMPTY_TRACK_STATS());
+
   const [purchasedItems, setPurchasedItems] = useState([]);
   const [heartPotionPurchasedAt, setHeartPotionPurchasedAt] = useState(null);
 
   const [ownedAvatarIds, setOwnedAvatarIds] = useState([1]);
   const [activeAvatarId, setActiveAvatarId] = useState(1);
   const [customProfileImage, setCustomProfileImage] = useState(null);
-  const [activeAvatarUrl, setActiveAvatarUrl] = useState('🟫');
+  const [activeAvatarUrl, setActiveAvatarUrl] = useState('🎮');
 
   const [failedQuestions, setFailedQuestions] = useState([]);
   const [lastSpinTime, setLastSpinTime] = useState(null);
@@ -93,6 +100,50 @@ export const AppProvider = ({ children }) => {
   const [achievementToast, setAchievementToast] = useState(null);
 
   const [usersList, setUsersList] = useState([]);
+
+  // New features added for state integration (loaded per user)
+  const [friends, setFriends] = useState([]);
+  const [friendRequests, setFriendRequests] = useState([]);
+  const [chats, setChats] = useState({});
+  const [claimedChests, setClaimedChests] = useState([]);
+  const [notifications, setNotifications] = useState([]);
+
+  // Default notifications for a new user
+  const getInitialNotifications = () => [
+    {
+      id: 1,
+      type: 'system',
+      message: 'Questify platformasına xoş gəlmisiniz! 🚀',
+      icon: '🎉',
+      isRead: false,
+      timestamp: Date.now() - 3600000 * 3,
+    },
+    {
+      id: 2,
+      type: 'friend',
+      message: 'Kamal sizə mesaj göndərdi: "Bugün C# tapşırığını bitirək?" 💬',
+      icon: '👤',
+      isRead: false,
+      timestamp: Date.now() - 3600000 * 2,
+    },
+    {
+      id: 3,
+      type: 'chapter',
+      message: '2-ci Fəsil kilidini açmaq üçün 1-ci Fəsilin 20 səviyyəsini tamamlayın! 🔓',
+      icon: '🗺️',
+      isRead: false,
+      timestamp: Date.now() - 3600000,
+    },
+    {
+      id: 4,
+      type: 'info',
+      message: 'Çərx-i Fələk bölməsindən hər gün pulsuz hədiyyələr qazanın! 🎡',
+      icon: '🎁',
+      isRead: true,
+      timestamp: Date.now() - 1800000,
+    },
+  ];
+
   const skipPersistRef = useRef(false);
 
   const refreshUsersList = useCallback((email = sessionEmail) => {
@@ -101,6 +152,8 @@ export const AppProvider = ({ children }) => {
 
   const applyProgress = useCallback((progress) => {
     setUser(progress.user);
+    setWelcomeBonusClaimed(progress.welcomeBonusClaimed ?? true);
+    setTrackStats(progress.trackStats || EMPTY_TRACK_STATS());
     setUnlockedLanguages(progress.unlockedLanguages || []);
     setActiveProgrammingLanguage(progress.activeProgrammingLanguage);
     setCompletedQuests(progress.completedQuests);
@@ -108,17 +161,24 @@ export const AppProvider = ({ children }) => {
     setOwnedAvatarIds(progress.ownedAvatarIds || [1]);
     setActiveAvatarId(progress.activeAvatarId ?? 1);
     setCustomProfileImage(progress.customProfileImage);
-    setActiveAvatarUrl(progress.activeAvatarUrl ?? '🟫');
+    setActiveAvatarUrl(progress.activeAvatarUrl ?? '🎮');
     setAchievements(progress.achievements);
     setFailedQuestions(progress.failedQuestions || []);
     setLastHeartRegenTime(progress.lastHeartRegenTime ?? Date.now());
     setHeartPotionPurchasedAt(progress.heartPotionPurchasedAt);
     setLastSpinTime(progress.lastSpinTime ?? null);
     setCurrentTab(progress.currentTab || 'dashboard');
+    // Hydrate new features
+    setFriends(progress.friends || []);
+    setFriendRequests(progress.friendRequests || []);
+    setChats(progress.chats || {});
+    setClaimedChests(progress.claimedChests || []);
+    setNotifications(progress.notifications && progress.notifications.length > 0 ? progress.notifications : getInitialNotifications());
   }, []);
 
-  // Hydrate session on mount (F5 protection)
+  // Hydrate session and global quests on mount (F5 protection)
   useEffect(() => {
+    setQuests(getStoredQuests()); // Hydrate quests from global shared storage
     const session = getSession();
     if (session?.email) {
       const progress = getUserProgress(session.email);
@@ -134,7 +194,7 @@ export const AppProvider = ({ children }) => {
   useEffect(() => {
     if (!isLoggedIn || !sessionEmail) return;
     refreshUsersList(sessionEmail);
-  }, [user.username, user.level, user.gold, user.xp, user.role, isLoggedIn, sessionEmail, refreshUsersList]);
+  }, [user.username, user.level, user.gold, user.xp, user.role, trackStats, isLoggedIn, sessionEmail, refreshUsersList]);
 
   // Persist progress whenever logged-in state changes
   useEffect(() => {
@@ -142,6 +202,8 @@ export const AppProvider = ({ children }) => {
 
     const snapshot = buildProgressSnapshot({
       user,
+      welcomeBonusClaimed,
+      trackStats,
       unlockedLanguages,
       activeProgrammingLanguage,
       completedQuests,
@@ -156,6 +218,12 @@ export const AppProvider = ({ children }) => {
       heartPotionPurchasedAt,
       lastSpinTime,
       currentTab,
+      // Pass new features to persist
+      friends,
+      friendRequests,
+      chats,
+      claimedChests,
+      notifications,
     });
     saveUserProgress(sessionEmail, snapshot);
   }, [
@@ -163,6 +231,8 @@ export const AppProvider = ({ children }) => {
     isLoggedIn,
     sessionEmail,
     user,
+    welcomeBonusClaimed,
+    trackStats,
     unlockedLanguages,
     activeProgrammingLanguage,
     completedQuests,
@@ -177,6 +247,11 @@ export const AppProvider = ({ children }) => {
     heartPotionPurchasedAt,
     lastSpinTime,
     currentTab,
+    friends,
+    friendRequests,
+    chats,
+    claimedChests,
+    notifications,
   ]);
 
   useEffect(() => {
@@ -248,9 +323,13 @@ export const AppProvider = ({ children }) => {
     setTimeout(() => setToast(null), 3000);
   };
 
-  const register = ({ username, email, password }) => {
-    const result = registerUser({ username, email, password });
+  const register = ({ firstName, lastName, email, password, emoji }) => {
+    const result = registerUser({ firstName, lastName, email, password, emoji });
     if (!result.ok) return result;
+    // Show welcome bonus toast after a small delay (caller handles modal close)
+    setTimeout(() => {
+      showToast('🎁 Xoş gəldiniz! +100 Qızıl · ❤️ 3 Can bonusu qazandınız!', '🎉');
+    }, 400);
     return { ok: true, email: result.user.email };
   };
 
@@ -275,6 +354,10 @@ export const AppProvider = ({ children }) => {
     setIsLoggedIn(false);
     setSessionEmail(null);
     setUsersList([]);
+    setFriends([]);
+    setFriendRequests([]);
+    setChats({});
+    setClaimedChests([]);
     setIsChatbotOpen(false);
     setChatbotAlert(false);
     setCurrentTab('dashboard');
@@ -299,10 +382,30 @@ export const AppProvider = ({ children }) => {
 
   const toggleTheme = () => setTheme((prev) => (prev === 'dark' ? 'light' : 'dark'));
 
-  const addGold = (amount) => setUser((prev) => ({ ...prev, gold: prev.gold + amount }));
+  const addTrackRewards = (track, goldAmount, xpAmount) => {
+    if (!track) return;
+    setTrackStats((prev) => ({
+      ...prev,
+      [track]: {
+        xp: (prev[track]?.xp || 0) + xpAmount,
+        gold: (prev[track]?.gold || 0) + goldAmount,
+      },
+    }));
+  };
+
+  const addGold = (amount, track = null) => {
+    setUser((prev) => ({ ...prev, gold: prev.gold + amount }));
+    if (track) {
+      setTrackStats((prev) => ({
+        ...prev,
+        [track]: { ...prev[track], gold: (prev[track]?.gold || 0) + amount },
+      }));
+    }
+  };
+
   const spendGold = (amount) => setUser((prev) => ({ ...prev, gold: Math.max(0, prev.gold - amount) }));
 
-  const addXp = (amount) => {
+  const addXp = (amount, track = null) => {
     setUser((prev) => {
       const newXp = prev.xp + amount;
       if (newXp >= prev.maxXp) {
@@ -311,6 +414,18 @@ export const AppProvider = ({ children }) => {
       }
       return { ...prev, xp: newXp };
     });
+    if (track) {
+      setTrackStats((prev) => ({
+        ...prev,
+        [track]: { ...prev[track], xp: (prev[track]?.xp || 0) + amount },
+      }));
+    }
+  };
+
+  /** Add heart(s) — capped at 5 max via spin wheel or other rewards */
+  const addHeart = (amount = 1) => {
+    setUser((prev) => ({ ...prev, hearts: Math.min(5, prev.hearts + amount) }));
+    showToast(`+${amount} ❤️ Can qazandınız!`, '💖');
   };
 
   const completeQuest = (quest) => {
@@ -318,14 +433,29 @@ export const AppProvider = ({ children }) => {
     const currentList = completedQuests[activeProgrammingLanguage] || [];
     if (currentList.includes(quest.id)) return;
 
+    const updatedList = [...currentList, quest.id];
     setCompletedQuests((prev) => ({
       ...prev,
-      [activeProgrammingLanguage]: [...(prev[activeProgrammingLanguage] || []), quest.id],
+      [activeProgrammingLanguage]: updatedList,
     }));
 
     addGold(quest.goldReward);
     addXp(quest.xpReward);
+    addTrackRewards(activeProgrammingLanguage, quest.goldReward, quest.xpReward);
     showToast(`+${quest.goldReward} 🪙  +${quest.xpReward} XP qazandınız!`, '⭐');
+
+    // Push quest completion notification
+    pushNotification('quest', `${quest.title} mərhələsini tamamladınız! +${quest.goldReward} 🪙`, '🏆');
+
+    // Check if Map 1 (Chapter 1) is fully completed (exactly 20 levels completed)
+    // Map 1 levels have IDs 1-20
+    const ch1Ids = Array.from({ length: 20 }, (_, i) => i + 1);
+    const completedCh1Count = updatedList.filter(id => ch1Ids.includes(id)).length;
+    const prevCompletedCh1Count = currentList.filter(id => ch1Ids.includes(id)).length;
+
+    if (completedCh1Count === 20 && prevCompletedCh1Count < 20) {
+      pushNotification('chapter', `Təbriklər! 1-ci Fəsli bitirdiniz. 2-ci Fəsil aktivləşdi! 🔓`, '🚀');
+    }
   };
 
   const deductHeart = () => {
@@ -357,8 +487,10 @@ export const AppProvider = ({ children }) => {
       if (item.itemType === 'avatar') {
         setOwnedAvatarIds((prev) => [...prev, item.id]);
         showToast(`"${item.name}" koleksiyona əlavə edildi! Profildən geyindirin 🎭`, '🛒');
+        pushNotification('shop', `"${item.name}" avatarı alındı! 🎭`, '🛒');
       } else {
         showToast(`"${item.name}" alındı! 🎉`, '🛒');
+        pushNotification('shop', `"${item.name}" nişanı alındı! 🏆`, '🛒');
       }
       return true;
     }
@@ -379,6 +511,7 @@ export const AppProvider = ({ children }) => {
       setHeartPotionPurchasedAt(Date.now());
       setUser((prev) => ({ ...prev, hearts: Math.min(3, prev.hearts + 1) }));
       showToast('Can İksiri istifadə edildi! +1 Can', '💖');
+      pushNotification('shop', 'Can İksiri istifadə edildi! +1 Can ❤️', '💖');
       return true;
     }
 
@@ -386,6 +519,7 @@ export const AppProvider = ({ children }) => {
       spendGold(item.price);
       setUser((prev) => ({ ...prev, jokers: prev.jokers + 1 }));
       showToast('50/50 Joker alındı!', '🃏');
+      pushNotification('shop', '50/50 Joker alındı! 🃏', '🃏');
       return true;
     }
 
@@ -442,13 +576,37 @@ export const AppProvider = ({ children }) => {
 
   const recordSpin = (timestamp) => setLastSpinTime(timestamp);
 
+  const pushNotification = useCallback((type, message, icon) => {
+    setNotifications((prev) => [
+      {
+        id: Date.now() + Math.random(),
+        type,
+        message,
+        icon,
+        isRead: false,
+        timestamp: Date.now(),
+      },
+      ...prev,
+    ]);
+  }, []);
+
+  const markAllNotificationsRead = useCallback(() => {
+    setNotifications((prev) => prev.map((n) => ({ ...n, isRead: true })));
+  }, []);
+
+  const clearNotifications = useCallback(() => {
+    setNotifications([]);
+  }, []);
+
+  // Global quest addition + storage write
   const addQuest = (newQuest, targetLevelId, targetLanguage) => {
     setQuests((prev) => {
       const langKey = targetLanguage || activeProgrammingLanguage || 'C#';
       const trackQuests = prev[langKey] || [];
 
+      let updated;
       if (targetLevelId) {
-        return {
+        updated = {
           ...prev,
           [langKey]: trackQuests.map((q) => {
             if (q.id === Number(targetLevelId)) {
@@ -457,17 +615,20 @@ export const AppProvider = ({ children }) => {
             return q;
           }),
         };
+      } else {
+        const nextId = trackQuests.length > 0 ? Math.max(...trackQuests.map((q) => q.id)) + 1 : 1;
+        const formattedQuest = {
+          ...newQuest,
+          id: nextId,
+          levelName: `Level ${trackQuests.length + 1}: ${newQuest.topic || 'Custom'}`,
+          challenges: [newQuest.challenge],
+        };
+        updated = { ...prev, [langKey]: [...trackQuests, formattedQuest] };
+        showToast(`Yeni mərhələ yaradıldı (${langKey}): "${formattedQuest.title}"`, '🆕');
       }
 
-      const nextId = trackQuests.length > 0 ? Math.max(...trackQuests.map((q) => q.id)) + 1 : 1;
-      const formattedQuest = {
-        ...newQuest,
-        id: nextId,
-        levelName: `Level ${trackQuests.length + 1}: ${newQuest.topic || 'Custom'}`,
-        challenges: [newQuest.challenge],
-      };
-      showToast(`Yeni mərhələ yaradıldı (${langKey}): "${formattedQuest.title}"`, '🆕');
-      return { ...prev, [langKey]: [...trackQuests, formattedQuest] };
+      saveStoredQuests(updated); // Sync global quests with LocalStorage
+      return updated;
     });
   };
 
@@ -514,6 +675,184 @@ export const AppProvider = ({ children }) => {
     showToast('İstifadəçi silindi', '🗑️');
   };
 
+  const getLeaderboard = (track) => {
+    if (track === 'Global') return getGlobalLeaderboard(sessionEmail);
+    return getLeaderboardForTrack(track, sessionEmail);
+  };
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // FRIENDSHIP & CHAT SYSTEM OPERATIONS (State simulation)
+  // ──────────────────────────────────────────────────────────────────────────
+  
+  const sendFriendRequest = (targetEmail) => {
+    const target = targetEmail.trim().toLowerCase();
+    if (target === sessionEmail.toLowerCase()) {
+      showToast('Özünüzə dostluq göndərə bilməzsiniz!', '⚠️');
+      return false;
+    }
+
+    const allUsers = getRegisteredUsers();
+    const exists = allUsers.find(u => u.email === target);
+    if (!exists) {
+      showToast('İstifadəçi tapılmadı.', '⚠️');
+      return false;
+    }
+
+    // Check if already friends
+    if (friends.includes(target)) {
+      showToast('Bu istifadəçi ilə artıq dostsunuz.', '⚠️');
+      return false;
+    }
+
+    // Check if request already pending
+    const alreadySent = friendRequests.some(r => r.toEmail === target && r.status === 'pending');
+    if (alreadySent) {
+      showToast('Dostluq sorğusu artıq göndərilib.', 'ℹ️');
+      return false;
+    }
+
+    // Add a pending request to current user and target user's storage
+    const newRequest = {
+      id: Date.now(),
+      fromEmail: sessionEmail,
+      fromUsername: user.username,
+      fromEmoji: activeAvatarUrl || user.emoji,
+      toEmail: target,
+      status: 'pending',
+      timestamp: Date.now()
+    };
+
+    // Update current user requests state
+    setFriendRequests(prev => [...prev, newRequest]);
+
+    // Simulating instant database updates by pushing to target user's progress record in LocalStorage
+    const targetProgress = getUserProgress(target);
+    targetProgress.friendRequests = targetProgress.friendRequests || [];
+    // Ensure no duplicates in target's requests
+    if (!targetProgress.friendRequests.some(r => r.fromEmail === sessionEmail)) {
+      targetProgress.friendRequests.push(newRequest);
+      saveUserProgress(target, targetProgress);
+    }
+
+    showToast('Dostluq sorğusu göndərildi!', '✉️');
+    return true;
+  };
+
+  const acceptFriendRequest = (requestId) => {
+    const req = friendRequests.find(r => r.id === requestId);
+    if (!req) return;
+
+    const senderEmail = req.fromEmail.toLowerCase();
+    const receiverEmail = req.toEmail.toLowerCase();
+    const otherUserEmail = senderEmail === sessionEmail.toLowerCase() ? receiverEmail : senderEmail;
+
+    // Add to current user's friends list state
+    setFriends(prev => {
+      if (!prev.includes(otherUserEmail)) {
+        return [...prev, otherUserEmail];
+      }
+      return prev;
+    });
+
+    // Remove request state
+    setFriendRequests(prev => prev.filter(r => r.id !== requestId));
+
+    // Update the other user's friendship list in storage (simulates SQL UPDATE)
+    const otherUserProgress = getUserProgress(otherUserEmail);
+    otherUserProgress.friends = otherUserProgress.friends || [];
+    if (!otherUserProgress.friends.includes(sessionEmail)) {
+      otherUserProgress.friends.push(sessionEmail);
+    }
+    // Remove request on other user's end
+    otherUserProgress.friendRequests = (otherUserProgress.friendRequests || []).filter(r => r.id !== requestId);
+    saveUserProgress(otherUserEmail, otherUserProgress);
+
+    showToast('Dostluq sorğusu qəbul edildi! 👥', '🎉');
+    pushNotification('friend', `${req.fromUsername || req.fromEmail} ilə artıq dostsunuz! 👥`, '🎉');
+  };
+
+  const rejectFriendRequest = (requestId) => {
+    const req = friendRequests.find(r => r.id === requestId);
+    if (!req) return;
+
+    // Filter local request state
+    setFriendRequests(prev => prev.filter(r => r.id !== requestId));
+
+    // Clean up other user request in storage
+    const otherUserEmail = req.fromEmail.toLowerCase() === sessionEmail.toLowerCase() ? req.toEmail.toLowerCase() : req.fromEmail.toLowerCase();
+    const otherUserProgress = getUserProgress(otherUserEmail);
+    otherUserProgress.friendRequests = (otherUserProgress.friendRequests || []).filter(r => r.id !== requestId);
+    saveUserProgress(otherUserEmail, otherUserProgress);
+
+    showToast('Sorğu rədd edildi.', 'ℹ️');
+  };
+
+  const sendChatMessage = (friendEmail, text) => {
+    if (!text.trim()) return;
+    const cleanEmail = friendEmail.toLowerCase();
+
+    const newMessage = {
+      id: Date.now(),
+      sender: sessionEmail,
+      text: text,
+      timestamp: Date.now(),
+      isRead: true, // Messages sent by the current user are always "read" by them
+    };
+
+    // Update current user chat state
+    setChats(prev => {
+      const prevMessages = prev[cleanEmail] || [];
+      return {
+        ...prev,
+        [cleanEmail]: [...prevMessages, newMessage]
+      };
+    });
+
+    // Push the message to the friend's chat storage with isRead: false
+    // (it is unread from the friend's perspective until they open it)
+    const messageForFriend = { ...newMessage, isRead: false };
+    const otherUserProgress = getUserProgress(cleanEmail);
+    otherUserProgress.chats = otherUserProgress.chats || {};
+    const friendConvKey = sessionEmail.toLowerCase();
+    otherUserProgress.chats[friendConvKey] = otherUserProgress.chats[friendConvKey] || [];
+    otherUserProgress.chats[friendConvKey].push(messageForFriend);
+    saveUserProgress(cleanEmail, otherUserProgress);
+  };
+
+  // Mark all messages from a single chat as read
+  const markChatAsRead = (friendEmail) => {
+    if (!friendEmail) return;
+    const cleanEmail = friendEmail.toLowerCase();
+    setChats(prev => {
+      if (!prev[cleanEmail]) return prev;
+      return {
+        ...prev,
+        [cleanEmail]: prev[cleanEmail].map(msg => ({ ...msg, isRead: true }))
+      };
+    });
+  };
+
+  // Mark all messages from all chats as read and persist to storage
+  const markAllChatsRead = () => {
+    setChats(prev => {
+      const updated = {};
+      Object.keys(prev).forEach(friendKey => {
+        updated[friendKey] = (prev[friendKey] || []).map(msg => ({ ...msg, isRead: true }));
+      });
+      return updated;
+    });
+  };
+
+  // RPG Roadmap chest claims state
+  const claimTreasureChest = (chestId) => {
+    if (claimedChests.includes(chestId)) return false;
+
+    setClaimedChests(prev => [...prev, chestId]);
+    addGold(25); // Milestone reward gold
+    showToast('Xəzinə sandığı tapıldı! +25 Qızıl 🪙', '🎁');
+    return true;
+  };
+
   const value = {
     language,
     setLanguage,
@@ -532,12 +871,15 @@ export const AppProvider = ({ children }) => {
     addGold,
     spendGold,
     addXp,
+    addHeart,
     deductHeart,
     useJoker,
     timeUntilNextHeart,
     quests,
     completedQuests,
     completeQuest,
+    trackStats,
+    getLeaderboard,
     purchasedItems,
     buyItem,
     ownedAvatarIds,
@@ -575,6 +917,22 @@ export const AppProvider = ({ children }) => {
     addQuest,
     updateUserInfo,
     deleteUser,
+    notifications,
+    pushNotification,
+    markAllNotificationsRead,
+    clearNotifications,
+    // Exposing advanced features states & handlers
+    friends,
+    friendRequests,
+    chats,
+    claimedChests,
+    sendFriendRequest,
+    acceptFriendRequest,
+    rejectFriendRequest,
+    sendChatMessage,
+    markChatAsRead,
+    markAllChatsRead,
+    claimTreasureChest
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

@@ -1,15 +1,56 @@
+/**
+ * storage.js — Questify LocalStorage Persistence Layer
+ *
+ * SQL TABLE MAPPING (for future C# Web API + MS SQL Server migration):
+ * ─────────────────────────────────────────────────────────────────────
+ * STORAGE_KEYS.USERS          → Table: Users           (Id, FirstName, LastName, Email, PasswordHash, Role, CreatedAt)
+ * STORAGE_KEYS.SESSION        → Table: Sessions         (Email, LoggedInAt)
+ * STORAGE_KEYS.QUESTS         → Table: Quests           (Id, Language, Title, Topic, Icon, Difficulty, XpReward, GoldReward, Description, ChallengeDataJson)
+ * progressKey(email)          → Table: UserProgress     (UserId, Gold, XP, Level, Hearts, Jokers, Streak, ...)
+ * progress.trackStats         → Table: TrackStats       (UserId, Track, XP, Gold)
+ * progress.completedQuests    → Table: CompletedQuests  (UserId, QuestId, Track, CompletedAt)
+ * progress.purchasedItems     → Table: PurchasedItems   (UserId, ItemId, PurchasedAt)
+ * progress.achievements       → Table: Achievements     (UserId, AchievementKey, UnlockedAt)
+ * progress.failedQuestions    → Table: FailedQuestions  (UserId, QuestId, QuestionText, FailedAt)
+ * progress.lastSpinTime       → Table: DailySpins       (UserId, SpunAt)
+ * progress.friends            → Table: Friendships      (UserId, FriendEmail, Status, CreatedAt)
+ * progress.friendRequests     → Table: FriendRequests   (Id, FromEmail, ToEmail, Status, CreatedAt)
+ * progress.chats              → Table: ChatMessages     (SenderEmail, ReceiverEmail, MessageText, SentAt)
+ * progress.claimedChests      → Table: ClaimedChests    (UserId, ChestId, ClaimedAt)
+ * ─────────────────────────────────────────────────────────────────────
+ */
+
+import {
+  initialQuestsCSharp,
+  initialQuestsJava,
+  initialQuestsPython,
+} from '../data/mockData';
+
 const STORAGE_KEYS = {
   USERS: 'questify_users',
   SESSION: 'questify_session',
+  QUESTS: 'questify_quests',
+  WEEKLY_ANCHOR: 'questify_weekly_anchor',
   progressKey: (email) => `questify_progress_${email.toLowerCase()}`,
 };
 
+export const ALL_TRACKS = ['C#', 'Java', 'Python'];
+
+export const EMPTY_TRACK_STATS = () => ({
+  'C#': { xp: 0, gold: 0 },
+  Java: { xp: 0, gold: 0 },
+  Python: { xp: 0, gold: 0 },
+});
+
 export const DEFAULT_USER_PROGRESS = {
+  // → Maps to: Users + UserProgress tables
   user: {
     username: 'Tələbə',
+    firstName: '',
+    lastName: '',
     emoji: '🎮',
     level: 1,
-    gold: 150,
+    gold: 250,          // 150 baseline + 100 welcome bonus
     xp: 0,
     maxXp: 1000,
     role: 'İstifadəçi',
@@ -17,6 +58,8 @@ export const DEFAULT_USER_PROGRESS = {
     jokers: 0,
     streak: 0,
   },
+  welcomeBonusClaimed: false,   // → UserProgress.WelcomeBonusClaimed (bit/boolean)
+  trackStats: EMPTY_TRACK_STATS(),
   unlockedLanguages: [],
   activeProgrammingLanguage: null,
   completedQuests: { 'C#': [], Java: [], Python: [] },
@@ -24,13 +67,19 @@ export const DEFAULT_USER_PROGRESS = {
   ownedAvatarIds: [1],
   activeAvatarId: 1,
   customProfileImage: null,
-  activeAvatarUrl: '🟫',
+  activeAvatarUrl: '🎮',
   achievements: { firstQuest: false, goldSaver: false, streakMaster: false },
   failedQuestions: [],
   lastHeartRegenTime: Date.now(),
   heartPotionPurchasedAt: null,
   lastSpinTime: null,
   currentTab: 'dashboard',
+  // New features added for state integration
+  friends: [],          // Array of email strings
+  friendRequests: [],  // Array of request objects: { id, fromEmail, toEmail, status }
+  chats: {},           // Object schema: { [friendEmail]: [{ id, sender, text, timestamp }] }
+  claimedChests: [],   // Array of chest ID strings: e.g., ['csharp-chest-1']
+  notifications: [],   // Array of notification objects: { id, type, message, icon, isRead, timestamp }
 };
 
 function safeParse(json, fallback) {
@@ -49,7 +98,26 @@ export function saveRegisteredUsers(users) {
   localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(users));
 }
 
-export function registerUser({ username, email, password }) {
+// Global Quests Persistence (Shared table simulation)
+export function getStoredQuests() {
+  const stored = safeParse(localStorage.getItem(STORAGE_KEYS.QUESTS), null);
+  if (!stored) {
+    const initial = {
+      'C#': initialQuestsCSharp,
+      Java: initialQuestsJava,
+      Python: initialQuestsPython,
+    };
+    saveStoredQuests(initial);
+    return initial;
+  }
+  return stored;
+}
+
+export function saveStoredQuests(quests) {
+  localStorage.setItem(STORAGE_KEYS.QUESTS, JSON.stringify(quests));
+}
+
+export function registerUser({ firstName, lastName, email, password, emoji }) {
   const normalizedEmail = email.trim().toLowerCase();
   const users = getRegisteredUsers();
 
@@ -57,10 +125,18 @@ export function registerUser({ username, email, password }) {
     return { ok: false, error: 'email_taken' };
   }
 
+  const trimmedFirst = firstName.trim();
+  const trimmedLast = lastName.trim();
+  const displayName = `${trimmedFirst} ${trimmedLast}`.trim();
+
   const isAdmin = normalizedEmail === 'admin@questify.az';
+  const chosenEmoji = emoji || '🎮';
+
   const newUser = {
     id: Date.now(),
-    username: username.trim(),
+    firstName: trimmedFirst,
+    lastName: trimmedLast,
+    username: displayName,
     email: normalizedEmail,
     password,
     role: isAdmin ? 'Admin' : 'İstifadəçi',
@@ -72,16 +148,21 @@ export function registerUser({ username, email, password }) {
 
   const progress = {
     ...DEFAULT_USER_PROGRESS,
+    welcomeBonusClaimed: true,  // Mark as claimed on registration
     user: {
       ...DEFAULT_USER_PROGRESS.user,
-      username: newUser.username,
+      username: displayName,
+      firstName: trimmedFirst,
+      lastName: trimmedLast,
       role: newUser.role,
-      emoji: isAdmin ? '🛡️' : '🎮',
-      gold: isAdmin ? 9999 : 150,
+      emoji: isAdmin ? '🛡️' : chosenEmoji,
+      gold: isAdmin ? 9999 : 250,   // 250 = 150 baseline + 100 welcome bonus
       level: isAdmin ? 99 : 1,
       xp: isAdmin ? 9500 : 0,
       streak: isAdmin ? 3 : 0,
+      hearts: 3,
     },
+    trackStats: EMPTY_TRACK_STATS(),
   };
 
   saveUserProgress(normalizedEmail, progress);
@@ -116,12 +197,24 @@ export function clearSession() {
 export function getUserProgress(email) {
   const key = STORAGE_KEYS.progressKey(email);
   const saved = safeParse(localStorage.getItem(key), null);
-  if (!saved) return { ...DEFAULT_USER_PROGRESS };
+  if (!saved) return { ...DEFAULT_USER_PROGRESS, trackStats: EMPTY_TRACK_STATS() };
+
+  const reg = getRegisteredUsers().find((u) => u.email === email.toLowerCase());
 
   return {
     ...DEFAULT_USER_PROGRESS,
     ...saved,
-    user: { ...DEFAULT_USER_PROGRESS.user, ...saved.user },
+    user: {
+      ...DEFAULT_USER_PROGRESS.user,
+      ...saved.user,
+      firstName: saved.user?.firstName || reg?.firstName || '',
+      lastName: saved.user?.lastName || reg?.lastName || '',
+      username: saved.user?.username || reg?.username || DEFAULT_USER_PROGRESS.user.username,
+    },
+    trackStats: {
+      ...EMPTY_TRACK_STATS(),
+      ...(saved.trackStats || {}),
+    },
     completedQuests: {
       ...DEFAULT_USER_PROGRESS.completedQuests,
       ...saved.completedQuests,
@@ -130,6 +223,11 @@ export function getUserProgress(email) {
       ...DEFAULT_USER_PROGRESS.achievements,
       ...saved.achievements,
     },
+    friends: saved.friends || [],
+    friendRequests: saved.friendRequests || [],
+    chats: saved.chats || {},
+    claimedChests: saved.claimedChests || [],
+    notifications: saved.notifications || [],
   };
 }
 
@@ -143,6 +241,8 @@ export function saveUserProgress(email, progress) {
 export function buildProgressSnapshot(state) {
   return {
     user: state.user,
+    welcomeBonusClaimed: state.welcomeBonusClaimed ?? true,
+    trackStats: state.trackStats,
     unlockedLanguages: state.unlockedLanguages,
     activeProgrammingLanguage: state.activeProgrammingLanguage,
     completedQuests: state.completedQuests,
@@ -157,10 +257,69 @@ export function buildProgressSnapshot(state) {
     heartPotionPurchasedAt: state.heartPotionPurchasedAt,
     lastSpinTime: state.lastSpinTime,
     currentTab: state.currentTab,
+    friends: state.friends || [],
+    friendRequests: state.friendRequests || [],
+    chats: state.chats || {},
+    notifications: state.notifications || [],
   };
 }
 
-/** Build admin/leaderboard directory from registered accounts only */
+/** Leaderboard row for a specific language track → mimics SQL: SELECT ... FROM TrackStats JOIN Users WHERE Track = @track */
+export function getLeaderboardForTrack(track, currentSessionEmail = null) {
+  const normalizedSession = currentSessionEmail?.toLowerCase() ?? null;
+
+  return getRegisteredUsers().map((reg) => {
+    const progress = getUserProgress(reg.email);
+    const stats = progress.trackStats?.[track] || { xp: 0, gold: 0 };
+
+    return {
+      id: reg.id,
+      email: reg.email,
+      name: progress.user.username,
+      firstName: reg.firstName || progress.user.firstName,
+      lastName: reg.lastName || progress.user.lastName,
+      emoji: progress.user.emoji,
+      level: progress.user.level,
+      gold: stats.gold,
+      xp: stats.xp,
+      role: reg.role,
+      isCurrentUser: normalizedSession === reg.email,
+    };
+  });
+}
+
+/**
+ * Global leaderboard — aggregates XP and Gold across ALL tracks
+ * Mimics SQL: SELECT UserId, SUM(XP) as TotalXP, SUM(Gold) as TotalGold FROM TrackStats GROUP BY UserId
+ */
+export function getGlobalLeaderboard(currentSessionEmail = null) {
+  const normalizedSession = currentSessionEmail?.toLowerCase() ?? null;
+
+  return getRegisteredUsers().map((reg) => {
+    const progress = getUserProgress(reg.email);
+    const trackStats = progress.trackStats || EMPTY_TRACK_STATS();
+
+    // Aggregate across all tracks
+    const totalXp = ALL_TRACKS.reduce((sum, t) => sum + (trackStats[t]?.xp || 0), 0);
+    const totalGold = progress.user.gold; // Global gold = total wallet gold
+
+    return {
+      id: reg.id,
+      email: reg.email,
+      name: progress.user.username,
+      firstName: reg.firstName || progress.user.firstName,
+      lastName: reg.lastName || progress.user.lastName,
+      emoji: progress.user.emoji,
+      level: progress.user.level,
+      gold: totalGold,
+      xp: totalXp,
+      role: reg.role,
+      isCurrentUser: normalizedSession === reg.email,
+    };
+  });
+}
+
+/** Admin directory — global wallet stats */
 export function getAllUsersDirectory(currentSessionEmail = null) {
   const normalizedSession = currentSessionEmail?.toLowerCase() ?? null;
 
@@ -170,6 +329,8 @@ export function getAllUsersDirectory(currentSessionEmail = null) {
       id: reg.id,
       email: reg.email,
       name: progress.user.username,
+      firstName: reg.firstName || progress.user.firstName,
+      lastName: reg.lastName || progress.user.lastName,
       emoji: progress.user.emoji,
       level: progress.user.level,
       gold: progress.user.gold,
@@ -178,6 +339,29 @@ export function getAllUsersDirectory(currentSessionEmail = null) {
       isCurrentUser: normalizedSession === reg.email,
     };
   });
+}
+
+/** Simulated weekly reset — countdown to next Sunday 23:59:59 */
+export function getWeeklyResetRemainingMs() {
+  const now = new Date();
+  const endOfWeek = new Date(now);
+  const day = now.getDay();
+  const daysUntilSunday = day === 0 ? 0 : 7 - day;
+  endOfWeek.setDate(now.getDate() + daysUntilSunday);
+  endOfWeek.setHours(23, 59, 59, 999);
+  if (endOfWeek <= now) {
+    endOfWeek.setDate(endOfWeek.getDate() + 7);
+  }
+  return Math.max(0, endOfWeek.getTime() - now.getTime());
+}
+
+export function formatWeeklyCountdown(ms) {
+  if (ms <= 0) return '0 gün 00:00';
+  const totalMin = Math.floor(ms / 60000);
+  const days = Math.floor(totalMin / (60 * 24));
+  const hours = Math.floor((totalMin % (60 * 24)) / 60);
+  const minutes = totalMin % 60;
+  return `${days} gün ${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}`;
 }
 
 export function updateRegisteredUserById(userId, updates) {

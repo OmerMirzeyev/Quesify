@@ -7,6 +7,7 @@ import LuckySpin from './spin/LuckySpin';
 import Leaderboard from './leaderboard/Leaderboard';
 import AdminPanel from './admin/AdminPanel';
 import ProfilePage from './profile/ProfilePage';
+import FriendsPage from './profile/FriendsPage';
 import Chatbot from './common/Chatbot';
 
 export default function MainApp() {
@@ -20,6 +21,7 @@ export default function MainApp() {
       case 'leaderboard': return <Leaderboard />;
       case 'admin':       return <AdminPanel />;
       case 'profile':     return <ProfilePage />;
+      case 'friends':     return <FriendsPage />;
       default:            return <Dashboard />;
     }
   };
@@ -43,7 +45,7 @@ export default function MainApp() {
         </div>
       )}
 
-      <main className="page-content">
+      <main className={`page-content ${currentTab === 'dashboard' ? 'page-content--dashboard' : 'page-content--scrollable'}`}>
         {renderTab()}
       </main>
 

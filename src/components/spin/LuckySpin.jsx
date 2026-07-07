@@ -1,4 +1,4 @@
-﻿import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { spinRewards } from '../../data/mockData';
 import { useApp } from '../../context/AppContext';
 
@@ -28,7 +28,7 @@ function formatCountdown(ms) {
 }
 
 export default function LuckySpin() {
-  const { addGold, addXp, t, lastSpinTime, recordSpin } = useApp();
+  const { addGold, addXp, addHeart, t, lastSpinTime, recordSpin, user, pushNotification } = useApp();
   const [rotation, setRotation] = useState(0);
   const [isSpinning, setIsSpinning] = useState(false);
   const [result, setResult] = useState(null);
@@ -80,16 +80,42 @@ export default function LuckySpin() {
       setIsSpinning(false);
       setResult({ reward, index: winIndex });
       setShowModal(true);
-      if (reward.type === 'gold') addGold(reward.value);
-      else if (reward.type === 'xp') addXp(reward.value);
+
+      // Apply reward instantly to global state and trigger notifications
+      if (reward.type === 'gold' && reward.value > 0) {
+        addGold(reward.value);
+        pushNotification('wheel', `Çərx-i Fələkdən +${reward.value} 🪙 qızıl qazandınız!`, '🎡');
+      } else if (reward.type === 'xp' && reward.value > 0) {
+        addXp(reward.value);
+        pushNotification('wheel', `Çərx-i Fələkdən +${reward.value} ⚡ XP qazandınız!`, '🎡');
+      } else if (reward.type === 'heart' && reward.value > 0) {
+        addHeart(reward.value);
+        pushNotification('wheel', `Çərx-i Fələkdən +${reward.value} ❤️ Can qazandınız!`, '🎡');
+      } else if (reward.type === 'none') {
+        pushNotification('wheel', `Çərx-i Fələkdə bəxtinizi yenidən yoxlayın!`, '🎡');
+      }
     }, 4200);
   };
 
   const closeModal = () => setShowModal(false);
 
-  const resultEmoji =
-    result?.reward.type === 'gold' ? '🪙' :
-    result?.reward.type === 'xp' ? '⚡' : '🎰';
+  const getResultEmoji = () => {
+    if (!result) return '🎰';
+    if (result.reward.type === 'gold') return '🪙';
+    if (result.reward.type === 'xp') return '⚡';
+    if (result.reward.type === 'heart') return '❤️';
+    return '🎰';
+  };
+
+  const getResultGlow = () => {
+    if (!result) return 'var(--gradient-primary)';
+    if (result.reward.type === 'gold') return 'var(--gradient-gold)';
+    if (result.reward.type === 'heart') return 'linear-gradient(135deg, #ef4444 0%, #ec4899 100%)';
+    if (result.reward.type === 'xp') return 'linear-gradient(135deg, #22c55e 0%, #06b6d4 100%)';
+    return 'var(--gradient-primary)';
+  };
+
+  const isWin = result && result.reward.value > 0;
 
   return (
     <div style={{ animation: 'fadeIn 0.4s ease' }}>
@@ -126,17 +152,51 @@ export default function LuckySpin() {
         }}>
           <span style={{ fontSize: '1.3rem' }}>🎡</span>
           <span>
-            Növbəti fırlanma hüququnuz: <strong style={{ color: 'var(--accent-purple-light)', fontFamily: 'monospace', fontSize: '1rem' }}>{formatCountdown(countdown)}</strong> sonra.
-            Gündəlik spin limiti — 1 dəfə / 24 saat.
+            Növbəti fırlanma hüququnuz:{' '}
+            <strong style={{ color: 'var(--accent-purple-light)', fontFamily: 'monospace', fontSize: '1rem' }}>
+              {formatCountdown(countdown)}
+            </strong>{' '}
+            sonra. Gündəlik spin limiti — 1 dəfə / 24 saat.
           </span>
         </div>
       )}
+
+      {/* Hearts display bar */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        gap: '0.5rem',
+        padding: '0.6rem 1rem',
+        background: 'rgba(239,68,68,0.06)',
+        border: '1px solid rgba(239,68,68,0.2)',
+        borderRadius: 'var(--radius)',
+        marginBottom: '1rem',
+        fontSize: '0.85rem',
+        color: 'var(--text-secondary)',
+      }}>
+        <span style={{ fontSize: '1.1rem' }}>❤️</span>
+        <span>Cari Can:</span>
+        <div style={{ display: 'flex', gap: '0.2rem' }}>
+          {[...Array(Math.max(0, user.hearts))].map((_, i) => (
+            <span key={i} style={{ fontSize: '1rem' }}>❤️</span>
+          ))}
+          {user.hearts === 0 && <span style={{ color: 'var(--accent-red)', fontWeight: 700 }}>Canınız bitmişdir!</span>}
+        </div>
+        <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+          +1 ❤️ mümkün mükafat!
+        </span>
+      </div>
 
       <div className="spin-container">
         <div className="wheel-wrapper">
           <div className="wheel-pointer" />
           <div className="wheel-svg-wrapper">
-            <div style={{ width: SIZE, height: SIZE, transform: `rotate(${rotation}deg)`, transformOrigin: 'center', transition: isSpinning ? 'transform 4.2s cubic-bezier(0.17, 0.67, 0.08, 0.99)' : 'none' }}>
+            <div style={{
+              width: SIZE, height: SIZE,
+              transform: `rotate(${rotation}deg)`,
+              transformOrigin: 'center',
+              transition: isSpinning ? 'transform 4.2s cubic-bezier(0.17, 0.67, 0.08, 0.99)' : 'none'
+            }}>
               <svg width={SIZE} height={SIZE} viewBox={`0 0 ${SIZE} ${SIZE}`}>
                 {spinRewards.map((reward, i) => {
                   const startAngle = i * SEG_DEG;
@@ -146,8 +206,23 @@ export default function LuckySpin() {
                   const textPt = polarToCartesian(CX, CY, textR, midAngle);
                   return (
                     <g key={i}>
-                      <path d={slicePath(CX, CY, R, startAngle, endAngle)} fill={reward.color} stroke="rgba(0,0,0,0.35)" strokeWidth="1.5" />
-                      <text x={textPt.x} y={textPt.y} textAnchor="middle" dominantBaseline="middle" fontSize={reward.label.length > 7 ? '9' : '11'} fontWeight="700" fill="white" style={{ userSelect: 'none' }} transform={`rotate(${midAngle}, ${textPt.x}, ${textPt.y})`}>
+                      <path
+                        d={slicePath(CX, CY, R, startAngle, endAngle)}
+                        fill={reward.color}
+                        stroke="rgba(0,0,0,0.35)"
+                        strokeWidth="1.5"
+                      />
+                      <text
+                        x={textPt.x}
+                        y={textPt.y}
+                        textAnchor="middle"
+                        dominantBaseline="middle"
+                        fontSize={reward.label.length > 8 ? '8' : '11'}
+                        fontWeight="700"
+                        fill="white"
+                        style={{ userSelect: 'none' }}
+                        transform={`rotate(${midAngle}, ${textPt.x}, ${textPt.y})`}
+                      >
                         {reward.label}
                       </text>
                     </g>
@@ -156,7 +231,9 @@ export default function LuckySpin() {
                 {spinRewards.map((_, i) => {
                   const angle = i * SEG_DEG;
                   const pt = polarToCartesian(CX, CY, R, angle);
-                  return <line key={`line-${i}`} x1={CX} y1={CY} x2={pt.x} y2={pt.y} stroke="rgba(0,0,0,0.3)" strokeWidth="1.5" />;
+                  return (
+                    <line key={`line-${i}`} x1={CX} y1={CY} x2={pt.x} y2={pt.y} stroke="rgba(0,0,0,0.3)" strokeWidth="1.5" />
+                  );
                 })}
                 <circle cx={CX} cy={CY} r={INNER_R} fill="#07071a" stroke="#8b5cf6" strokeWidth="3" />
                 <text x={CX} y={CY} textAnchor="middle" dominantBaseline="middle" fontSize="18" style={{ userSelect: 'none' }}>
@@ -188,38 +265,105 @@ export default function LuckySpin() {
           ) : t('spinBtn')}
         </button>
 
+        {/* Rewards legend */}
         <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', justifyContent: 'center', maxWidth: 400 }}>
-          {spinRewards.map((r) => (
-            <div key={r.label} style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', padding: '0.2rem 0.6rem', borderRadius: '100px', fontSize: '0.72rem', fontWeight: 600, background: `${r.color}22`, border: `1px solid ${r.color}44`, color: r.color }}>
-              <span style={{ width: 8, height: 8, borderRadius: '50%', background: r.color, flexShrink: 0 }} />
-              {r.label}
-            </div>
-          ))}
+          {[...new Set(spinRewards.map(r => r.label))].map((label) => {
+            const r = spinRewards.find(x => x.label === label);
+            return (
+              <div
+                key={label}
+                style={{
+                  display: 'flex', alignItems: 'center', gap: '0.3rem',
+                  padding: '0.2rem 0.6rem',
+                  borderRadius: '100px',
+                  fontSize: '0.72rem', fontWeight: 600,
+                  background: `${r.color}22`,
+                  border: `1px solid ${r.color}44`,
+                  color: r.color
+                }}
+              >
+                <span style={{ width: 8, height: 8, borderRadius: '50%', background: r.color, flexShrink: 0 }} />
+                {label}
+              </div>
+            );
+          })}
         </div>
       </div>
 
+      {/* ── Result Modal ── */}
       {showModal && result && (
         <div className="modal-overlay" onClick={closeModal}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ textAlign: 'center' }}>
             <button className="modal-close" onClick={closeModal}>✕</button>
-            <span className="spin-result-emoji">{resultEmoji}</span>
-            <h2 style={{ fontFamily: 'var(--font-display)', fontSize: '1.8rem', background: result.reward.type === 'gold' ? 'var(--gradient-gold)' : 'var(--gradient-primary)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text', marginBottom: '0.5rem' }}>
-              {result.reward.value > 0 ? 'Təbriklər! 🎉' : 'Yenidən Cəhd Et! 💪'}
+
+            {/* Result emoji with glow ring for heart */}
+            <div style={{ position: 'relative', display: 'inline-block', marginBottom: '0.75rem' }}>
+              <span
+                className="spin-result-emoji"
+                style={result.reward.type === 'heart' ? {
+                  filter: 'drop-shadow(0 0 20px rgba(239,68,68,0.8))',
+                  animation: 'coinBounce 0.6s ease infinite',
+                } : {}}
+              >
+                {getResultEmoji()}
+              </span>
+            </div>
+
+            <h2 style={{
+              fontFamily: 'var(--font-display)',
+              fontSize: '1.8rem',
+              background: getResultGlow(),
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              backgroundClip: 'text',
+              marginBottom: '0.5rem'
+            }}>
+              {isWin ? 'Təbriklər! 🎉' : 'Yenidən Cəhd Et! 💪'}
             </h2>
+
             <p style={{ fontSize: '1.1rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
-              {result.reward.type === 'gold' && result.reward.value > 0 && <>Siz <strong style={{ color: 'var(--accent-gold-light)', fontFamily: 'var(--font-display)', fontSize: '1.3rem' }}>+{result.reward.value} 🪙</strong> qızıl sikkə qazandınız!</>}
-              {result.reward.type === 'xp' && <>Siz <strong style={{ color: 'var(--accent-cyan)', fontFamily: 'var(--font-display)', fontSize: '1.3rem' }}>+{result.reward.value} ⚡ XP</strong> qazandınız!</>}
+              {result.reward.type === 'gold' && result.reward.value > 0 && (
+                <>Siz <strong style={{ color: 'var(--accent-gold-light)', fontFamily: 'var(--font-display)', fontSize: '1.3rem' }}>+{result.reward.value} 🪙</strong> qızıl sikkə qazandınız!</>
+              )}
+              {result.reward.type === 'xp' && (
+                <>Siz <strong style={{ color: 'var(--accent-cyan)', fontFamily: 'var(--font-display)', fontSize: '1.3rem' }}>+{result.reward.value} ⚡ XP</strong> qazandınız!</>
+              )}
+              {result.reward.type === 'heart' && (
+                <span style={{ color: '#ef4444', fontWeight: 700 }}>
+                  Siz <strong style={{ fontFamily: 'var(--font-display)', fontSize: '1.3rem' }}>+{result.reward.value} ❤️ Can</strong> qazandınız!
+                  <br />
+                  <span style={{ fontSize: '0.9rem', fontWeight: 500 }}>Cari can sayınız: {user.hearts} ❤️</span>
+                </span>
+              )}
               {result.reward.type === 'none' && 'Bu dəfə şans sizin tərəfinizdə deyil. Növbəti cəhddə uğurlar!'}
             </p>
-            <div style={{ background: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.2)', borderRadius: 'var(--radius)', padding: '0.6rem 1rem', marginBottom: '1.25rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+
+            <div style={{
+              background: 'rgba(139,92,246,0.08)',
+              border: '1px solid rgba(139,92,246,0.2)',
+              borderRadius: 'var(--radius)',
+              padding: '0.6rem 1rem',
+              marginBottom: '1.25rem',
+              fontSize: '0.8rem',
+              color: 'var(--text-muted)'
+            }}>
               ⏳ Növbəti spin: <strong style={{ color: 'var(--accent-purple-light)', fontFamily: 'monospace' }}>{formatCountdown(countdown)}</strong> sonra
             </div>
-            {result.reward.value > 0 && (
+
+            {isWin && (
               <div style={{ display: 'flex', justifyContent: 'center', gap: '0.5rem', fontSize: '1.5rem', marginBottom: '1.25rem', animation: 'fadeIn 0.5s ease' }}>
-                {'🎊🎉✨🎊🎉'.split('').map((e, i) => <span key={i} style={{ animationDelay: `${i * 0.1}s`, animation: 'coinBounce 0.8s ease infinite' }}>{e}</span>)}
+                {(result.reward.type === 'heart' ? '❤️💖❤️💖❤️' : '🎊🎉✨🎊🎉').split('').map((e, i) => (
+                  <span key={i} style={{ animationDelay: `${i * 0.1}s`, animation: 'coinBounce 0.8s ease infinite' }}>{e}</span>
+                ))}
               </div>
             )}
-            <button id="spin-modal-close-btn" className="btn btn-primary btn-xl" style={{ width: '100%', fontFamily: 'var(--font-display)', letterSpacing: '1px' }} onClick={closeModal}>
+
+            <button
+              id="spin-modal-close-btn"
+              className="btn btn-primary btn-xl"
+              style={{ width: '100%', fontFamily: 'var(--font-display)', letterSpacing: '1px' }}
+              onClick={closeModal}
+            >
               ✅ {t('close')}
             </button>
           </div>
