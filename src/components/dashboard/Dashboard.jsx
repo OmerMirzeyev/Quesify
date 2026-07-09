@@ -32,7 +32,7 @@ export default function Dashboard() {
   const lockedTracks = ALL_TRACKS.filter((lang) => !unlockedLanguages.includes(lang));
 
   return (
-    <div className="dashboard-game-layout" style={{ animation: 'fadeIn 0.4s ease' }}>
+    <div className="dashboard-game-layout h-full overflow-hidden">
       <div className="dashboard-fixed-chrome">
         {/* Track switcher */}
         <div

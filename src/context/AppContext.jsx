@@ -12,6 +12,7 @@ import {
   getSession,
   setSession,
   clearSession,
+  clearAdminLoggedIn,
   getUserProgress,
   saveUserProgress,
   buildProgressSnapshot,
@@ -351,6 +352,7 @@ export const AppProvider = ({ children }) => {
 
   const logout = () => {
     clearSession();
+    clearAdminLoggedIn();
     setIsLoggedIn(false);
     setSessionEmail(null);
     setUsersList([]);

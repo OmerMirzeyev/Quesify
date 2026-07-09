@@ -31,8 +31,44 @@ const STORAGE_KEYS = {
   SESSION: 'questify_session',
   QUESTS: 'questify_quests',
   WEEKLY_ANCHOR: 'questify_weekly_anchor',
+  ADMIN_LOGGED_IN: 'isAdminLoggedIn',
   progressKey: (email) => `questify_progress_${email.toLowerCase()}`,
 };
+
+/** Admin panel gate password (separate from user account password) */
+export const ADMIN_PANEL_PASSWORD = 'questify2024';
+
+/** Safe guard for SSR / private browsing — never read localStorage during render */
+export function isBrowser() {
+  return typeof window !== 'undefined' && typeof window.localStorage !== 'undefined';
+}
+
+export function getAdminLoggedIn() {
+  if (!isBrowser()) return false;
+  try {
+    return localStorage.getItem(STORAGE_KEYS.ADMIN_LOGGED_IN) === 'true';
+  } catch {
+    return false;
+  }
+}
+
+export function setAdminLoggedIn() {
+  if (!isBrowser()) return;
+  try {
+    localStorage.setItem(STORAGE_KEYS.ADMIN_LOGGED_IN, 'true');
+  } catch {
+    /* storage quota / private mode */
+  }
+}
+
+export function clearAdminLoggedIn() {
+  if (!isBrowser()) return;
+  try {
+    localStorage.removeItem(STORAGE_KEYS.ADMIN_LOGGED_IN);
+  } catch {
+    /* ignore */
+  }
+}
 
 export const ALL_TRACKS = ['C#', 'Java', 'Python'];
 

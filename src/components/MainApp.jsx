@@ -27,7 +27,7 @@ export default function MainApp() {
   };
 
   return (
-    <div className="app-container">
+    <div className="app-container h-screen overflow-hidden">
       <Navigation />
 
       {/* Real-time Achievement Pop-up Notification */}

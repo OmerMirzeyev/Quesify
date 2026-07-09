@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { isAdminRole } from '../../utils/storage';
+import AdminAuthGate from './AdminAuthGate';
 
 // Rich Pool of dynamic questions based on Language + Topic + Difficulty combination
 const GENERATED_AI_QUESTIONS = {
@@ -133,7 +134,7 @@ const GENERATED_AI_QUESTIONS = {
 };
 
 export default function AdminPanel() {
-  const { usersList, updateUserInfo, deleteUser, addQuest, quests, t } = useApp();
+  const { usersList, updateUserInfo, deleteUser, addQuest, quests, t, setCurrentTab } = useApp();
   const [activeAdminTab, setActiveAdminTab] = useState('users');
 
   // Edit User Modal State
@@ -296,6 +297,7 @@ export default function AdminPanel() {
   };
 
   return (
+    <AdminAuthGate onLogoutNavigate={() => setCurrentTab('dashboard')}>
     <div style={{ animation: 'fadeIn 0.4s ease' }}>
       <div className="section-header" style={{ marginBottom: '1.5rem' }}>
         <div>
@@ -618,5 +620,6 @@ export default function AdminPanel() {
         </div>
       )}
     </div>
+    </AdminAuthGate>
   );
 }
