@@ -1,5 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
+import { API_BASE_URL } from '../../utils/api';
+import { clearAuthSession, setAdminLoggedIn } from '../../utils/storage';
 
 const AVATAR_OPTIONS = [
   { emoji: '🎮', label: 'Gamer',    color: '#8b5cf6' },
@@ -15,7 +17,7 @@ const AVATAR_OPTIONS = [
 const STEPS = ['Hesab', 'Avatar', 'Başlayaq'];
 
 export default function AuthPage() {
-  const { register, login, t } = useApp();
+  const { register, login, setCurrentTab, t } = useApp();
 
   const [mode, setMode] = useState('register');  // 'register' | 'login'
   const [step, setStep] = useState(1);            // 1 | 2 | 3 (register only)
@@ -99,28 +101,54 @@ export default function AuthPage() {
   };
 
   /* ── Login ── */
-  const handleLogin = (e) => {
+  const handleLogin = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError('');
     setSuccessMsg('');
-    setTimeout(() => {
-      const trimmedEmail = form.email.trim().toLowerCase();
-      if (trimmedEmail === 'admin@gmail.com' && form.password === 'admin123') {
-        localStorage.setItem('userRole', 'admin');
-        localStorage.setItem('isAdminLoggedIn', 'true');
-      } else {
-        localStorage.setItem('userRole', 'user');
+
+    try {
+      const response = await fetch('http://localhost:5271/api/auth/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          email: form.email.trim(),
+          password: form.password,
+        }),
+      });
+
+      if (!response.ok) {
+        setError('E-poçt və ya şifrə yanlışdır.');
+        return;
+      }
+
+      const { token, role, expiration } = await response.json();
+
+      localStorage.setItem('authToken', token);
+      localStorage.setItem('userRole', role);
+      if (expiration) {
+        localStorage.setItem('authTokenExpiration', expiration);
+      }
+      if (role === 'Admin') {
+        setAdminLoggedIn();
       }
 
       const result = login(form.email, form.password);
-      setLoading(false);
       if (!result.ok) {
+        clearAuthSession();
         setError('E-poçt və ya şifrə yanlışdır.');
-        localStorage.removeItem('userRole');
-        localStorage.removeItem('isAdminLoggedIn');
+        return;
       }
-    }, 700);
+
+      if (role === 'Admin') {
+        setCurrentTab('admin');
+      }
+    } catch {
+      clearAuthSession();
+      setError('Serverə qoşulmaq mümkün olmadı. Backend işlədiyindən əmin olun.');
+    } finally {
+      setLoading(false);
+    }
   };
 
   const features = [

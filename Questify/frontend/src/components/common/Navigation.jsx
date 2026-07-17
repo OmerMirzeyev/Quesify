@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import ThemeToggle from './ThemeToggle';
-import { isAdminRole } from '../../utils/storage';
+import { isAppAdmin } from '../../utils/storage';
 import NotificationDropdown from './NotificationDropdown';
 
 export default function Navigation() {
@@ -31,7 +31,7 @@ export default function Navigation() {
   ];
 
   // Append Admin tab if user is admin
-  const tabs = userRole === 'admin'
+  const tabs = isAppAdmin(userRole)
     ? [...baseTabs, { id: 'admin', label: t('navAdmin'), icon: '🛡️' }]
     : baseTabs;
 

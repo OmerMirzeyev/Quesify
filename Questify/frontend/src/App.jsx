@@ -2,11 +2,11 @@ import React, { useEffect } from 'react';
 import { AppProvider, useApp } from './context/AppContext';
 import AuthPage from './components/auth/AuthPage';
 import MainApp from './components/MainApp';
-import { isAdminRole } from './utils/storage';
+import { isAppAdmin } from './utils/storage';
 
 function AppContent() {
   const { isLoggedIn, isHydrated, user, currentTab, setCurrentTab, userRole } = useApp();
-  const isAdmin = userRole === 'admin';
+  const isAdmin = isAppAdmin(userRole);
 
   // Kick demoted admins off the Admin panel immediately
   useEffect(() => {

@@ -32,6 +32,9 @@ const STORAGE_KEYS = {
   QUESTS: 'questify_quests',
   WEEKLY_ANCHOR: 'questify_weekly_anchor',
   ADMIN_LOGGED_IN: 'isAdminLoggedIn',
+  AUTH_TOKEN: 'authToken',
+  AUTH_TOKEN_EXPIRATION: 'authTokenExpiration',
+  USER_ROLE: 'userRole',
   progressKey: (email) => `questify_progress_${email.toLowerCase()}`,
 };
 
@@ -77,6 +80,47 @@ export function clearAdminLoggedIn() {
   } catch {
     /* ignore */
   }
+}
+
+export function getAuthToken() {
+  if (!isBrowser()) return null;
+  try {
+    return localStorage.getItem(STORAGE_KEYS.AUTH_TOKEN);
+  } catch {
+    return null;
+  }
+}
+
+export function setAuthSession({ token, role, expiration }) {
+  if (!isBrowser()) return;
+  try {
+    localStorage.setItem(STORAGE_KEYS.AUTH_TOKEN, token);
+    localStorage.setItem(STORAGE_KEYS.USER_ROLE, role);
+    if (expiration) {
+      localStorage.setItem(STORAGE_KEYS.AUTH_TOKEN_EXPIRATION, expiration);
+    }
+    if (role === 'Admin') {
+      setAdminLoggedIn();
+    }
+  } catch {
+    /* storage quota / private mode */
+  }
+}
+
+export function clearAuthSession() {
+  if (!isBrowser()) return;
+  try {
+    localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN);
+    localStorage.removeItem(STORAGE_KEYS.AUTH_TOKEN_EXPIRATION);
+    localStorage.removeItem(STORAGE_KEYS.USER_ROLE);
+    clearAdminLoggedIn();
+  } catch {
+    /* ignore */
+  }
+}
+
+export function isAppAdmin(userRole) {
+  return userRole === 'admin' || isAdminRole(userRole);
 }
 
 export const ALL_TRACKS = ['C#', 'Java', 'Python'];

@@ -13,6 +13,8 @@ import {
   setSession,
   clearSession,
   clearAdminLoggedIn,
+  clearAuthSession,
+  setAuthSession,
   getUserProgress,
   saveUserProgress,
   buildProgressSnapshot,
@@ -27,6 +29,7 @@ import {
   deleteRegisteredUserById,
   normalizeRole,
   isAdminRole,
+  isAppAdmin,
   EMPTY_TRACK_STATS,
   ALL_TRACKS as STORAGE_TRACKS,
   getRegisteredUsers,
@@ -351,19 +354,17 @@ export const AppProvider = ({ children }) => {
     setUsersList(getAllUsersDirectory(auth.user.email));
     setIsLoggedIn(true);
 
-    const role = localStorage.getItem('userRole');
-    setUserRole(role || '');
+    const role = localStorage.getItem('userRole') || '';
+    setUserRole(role);
 
     skipPersistRef.current = false;
 
-    return { ok: true, user: auth.user };
+    return { ok: true, user: auth.user, role };
   };
 
   const logout = () => {
     clearSession();
-    clearAdminLoggedIn();
-    localStorage.removeItem('isAdminLoggedIn');
-    localStorage.removeItem('userRole');
+    clearAuthSession();
     setUserRole('');
     setIsLoggedIn(false);
     setSessionEmail(null);

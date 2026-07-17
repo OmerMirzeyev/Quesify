@@ -4,3 +4,19 @@ GET {{backend_HostAddress}}/weatherforecast/
 Accept: application/json
 
 ###
+
+POST {{backend_HostAddress}}/api/auth/login
+Content-Type: application/json
+
+{
+  "email": "admin@gmail.com",
+  "password": "admin123"
+}
+
+###
+
+GET {{backend_HostAddress}}/api/admin/dashboard
+Authorization: Bearer {{token}}
+Accept: application/json
+
+###
