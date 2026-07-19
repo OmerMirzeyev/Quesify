@@ -1,5 +1,7 @@
 using System.Text;
+using backend.Data;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -9,7 +11,12 @@ var signingKey = jwtSettings["SigningKey"]
     ?? throw new InvalidOperationException("JWT SigningKey is not configured.");
 
 builder.Services.AddControllers();
-builder.Services.AddOpenApi();
+
+// Swagger üçün vacib olan sazlamalar
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
+builder.Services.AddDbContext<AppDbContext>(options => options.UseSqlite("Data Source=app.db"));
 
 builder.Services
     .AddAuthentication(options =>
@@ -47,20 +54,17 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-if (app.Environment.IsDevelopment())
+// Swagger paneli mütləq işə düşsün
+app.UseSwagger();
+app.UseSwaggerUI(c =>
 {
-    app.MapOpenApi();
-}
-
-// app.UseHttpsRedirection();
+    c.SwaggerEndpoint("/swagger/v1/swagger.json", "Quesify API V1");
+});
 
 app.UseRouting();
-
 app.UseCors("AllowAll");
-
 app.UseAuthentication();
 app.UseAuthorization();
-
 app.MapControllers();
 
 app.Run();
