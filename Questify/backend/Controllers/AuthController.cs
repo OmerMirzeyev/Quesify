@@ -27,8 +27,11 @@ public class AuthController : ControllerBase
     [HttpPost("register")]
     public async Task<ActionResult<AuthResponse>> Register([FromBody] RegisterModel model)
     {
+        Console.WriteLine($"Giriş cəhdi (Register) - E-poçt: {model?.Email}");
         if (!ModelState.IsValid)
         {
+            var errors = string.Join("; ", ModelState.Values.SelectMany(x => x.Errors).Select(x => x.ErrorMessage));
+            Console.WriteLine($"Register model validation failed: {errors}");
             return BadRequest(ModelState);
         }
 
@@ -36,6 +39,7 @@ public class AuthController : ControllerBase
 
         if (await _context.Users.AnyAsync(u => u.Email == email))
         {
+            Console.WriteLine($"Qeydiyyat ziddiyyəti: '{email}' artıq qeydiyyatdan keçib.");
             return Conflict(new { message = "Email is already registered." });
         }
 
@@ -90,6 +94,100 @@ public class AuthController : ControllerBase
             Expiration = expiration,
             Role = user.Role
         });
+    }
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, string> _resetCodes = new();
+
+    [HttpPost("forgot-password")]
+    public async Task<ActionResult> ForgotPassword([FromBody] ForgotPasswordModel model)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        var email = model.Email.Trim().ToLowerInvariant();
+        var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
+        if (user is null)
+        {
+            return NotFound(new { message = "İstifadəçi tapılmadı." });
+        }
+
+        // Generate a random 6-digit code
+        var randomCode = RandomNumberGenerator.GetInt32(100000, 1000000).ToString();
+        _resetCodes[email] = randomCode;
+
+        try
+        {
+            var subject = "Questify Şifrə Sıfırlama Kodu";
+            var body = $@"Hörmətli {user.FirstName} {user.LastName},
+
+Questify hesabınızın şifrəsini sıfırlamaq üçün doğrulama kodunuz: {randomCode}
+
+Qeyd: Bu kodu heç kimlə paylaşmayın.";
+
+            await SendEmailAsync(email, subject, body);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"SMTP Error: {ex.Message}");
+            return StatusCode(500, new { message = "E-poçt göndərilərkən xəta baş verdi. Zəhmət olmasa backend konfiqurasiyasını yoxlayın." });
+        }
+
+        return Ok(new 
+        { 
+            message = "Doğrulama kodu e-poçt ünvanınıza göndərildi. Zəhmət olmasa poçt qutunuzu yoxlayın." 
+        });
+    }
+
+    private async Task SendEmailAsync(string recipientEmail, string subject, string body)
+    {
+        var emailSettings = _configuration.GetSection("EmailSettings");
+        var senderEmail = emailSettings["SenderEmail"];
+        var appPassword = emailSettings["AppPassword"];
+
+        if (string.IsNullOrEmpty(senderEmail) || string.IsNullOrEmpty(appPassword))
+        {
+            throw new InvalidOperationException("Gmail SMTP 'SenderEmail' və ya 'AppPassword' konfiqurasiya olunmayıb.");
+        }
+
+        using var client = new System.Net.Mail.SmtpClient("smtp.gmail.com", 587)
+        {
+            Credentials = new System.Net.NetworkCredential(senderEmail, appPassword),
+            EnableSsl = true
+        };
+
+        using var mailMessage = new System.Net.Mail.MailMessage(senderEmail, recipientEmail, subject, body);
+        await client.SendMailAsync(mailMessage);
+    }
+
+    [HttpPost("reset-password")]
+    public async Task<ActionResult> ResetPassword([FromBody] ResetPasswordModel model)
+    {
+        if (!ModelState.IsValid)
+        {
+            return BadRequest(ModelState);
+        }
+
+        var email = model.Email.Trim().ToLowerInvariant();
+        var user = await _context.Users.FirstOrDefaultAsync(u => u.Email == email);
+        if (user is null)
+        {
+            return NotFound(new { message = "İstifadəçi tapılmadı." });
+        }
+
+        if (!_resetCodes.TryGetValue(email, out var savedCode) || savedCode != model.Code.Trim())
+        {
+            return BadRequest(new { message = "Yanlış doğrulama kodu." });
+        }
+
+        user.PasswordHash = HashPassword(model.Password);
+        _context.Users.Update(user);
+        await _context.SaveChangesAsync();
+
+        _resetCodes.TryRemove(email, out _);
+
+        return Ok(new { message = "Şifrəniz uğurla yeniləndi!" });
     }
 
     private static string HashPassword(string password)

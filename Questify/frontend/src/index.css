@@ -3444,3 +3444,222 @@ img {
   background: rgba(239, 68, 68, 0.08) !important;
   border-color: rgba(239, 68, 68, 0.55) !important;
 }
+
+/* ============================================================
+   PASSWORD TOGGLE BUTTON  (eye icon inside input)
+   ============================================================ */
+.pw-toggle-btn {
+  position: absolute;
+  right: 0.75rem;
+  top: 50%;
+  transform: translateY(-50%);
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 1.05rem;
+  line-height: 1;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: color 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 2;
+}
+
+.pw-toggle-btn:hover {
+  color: var(--accent-purple-light);
+}
+
+/* ============================================================
+   FORGOT PASSWORD — link below login form
+   ============================================================ */
+.fp-link-row {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -0.25rem;
+}
+
+.fp-link-btn {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--accent-purple-light);
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.fp-link-btn:hover {
+  color: var(--accent-cyan);
+  text-decoration: underline;
+}
+
+/* ============================================================
+   FORGOT PASSWORD MODAL
+   ============================================================ */
+.fp-modal {
+  max-width: 420px;
+}
+
+.fp-modal-header {
+  text-align: center;
+  margin-bottom: 1.5rem;
+}
+
+.fp-modal-icon {
+  font-size: 2.5rem;
+  margin-bottom: 0.6rem;
+}
+
+.fp-modal-title {
+  font-size: 1.35rem;
+  font-weight: 800;
+  background: var(--gradient-primary);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 0.35rem;
+}
+
+.fp-modal-sub {
+  font-size: 0.84rem;
+  color: var(--text-secondary);
+  line-height: 1.55;
+}
+
+.fp-modal-form {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.fp-submit-btn {
+  width: 100%;
+  padding: 0.75rem 1.5rem;
+  font-size: 0.92rem;
+  font-family: var(--font-display);
+  letter-spacing: 0.5px;
+}
+
+/* Large centered OTP-style code input */
+.fp-code-input {
+  text-align: center;
+  font-size: 1.6rem;
+  font-weight: 800;
+  letter-spacing: 0.6rem;
+  font-family: var(--font-display);
+  padding: 0.75rem 1rem;
+}
+
+.fp-resend-row {
+  text-align: right;
+  margin-top: -0.4rem;
+}
+
+.fp-resend-link {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.78rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.fp-resend-link:hover {
+  color: var(--accent-purple-light);
+  text-decoration: underline;
+}
+
+/* ============================================================
+   CUSTOM AVATAR UPLOAD (Register Step 2)
+   ============================================================ */
+.auth-avatar-upload-zone {
+  margin-top: 0.75rem;
+  padding: 0.85rem 1rem;
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius);
+  background: rgba(139, 92, 246, 0.03);
+  transition: border-color 0.2s ease;
+}
+
+.auth-avatar-upload-zone:hover {
+  border-color: var(--border-hover);
+}
+
+.auth-avatar-upload-label {
+  text-align: center;
+  font-size: 0.72rem;
+  font-weight: 600;
+  color: var(--text-muted);
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  margin-bottom: 0.6rem;
+}
+
+.auth-avatar-upload-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+/* Hide the native file input — triggered by the label */
+.auth-upload-input-hidden {
+  display: none;
+}
+
+.auth-upload-btn {
+  font-size: 0.8rem;
+  padding: 0.45rem 1rem;
+  white-space: nowrap;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+/* Custom avatar preview strip */
+.auth-custom-avatar-preview {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  flex: 1;
+  min-width: 0;
+}
+
+.auth-custom-avatar-img {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  object-fit: cover;
+  border: 2px solid var(--accent-purple);
+  box-shadow: var(--glow-purple);
+  flex-shrink: 0;
+}
+
+.auth-custom-avatar-name {
+  font-size: 0.78rem;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  flex: 1;
+  min-width: 0;
+}
+
+.auth-custom-avatar-remove {
+  background: none;
+  border: none;
+  padding: 0;
+  font-size: 0.75rem;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s ease;
+  flex-shrink: 0;
+}
+
+.auth-custom-avatar-remove:hover {
+  color: var(--accent-red);
+}

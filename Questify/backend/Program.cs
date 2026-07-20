@@ -12,11 +12,10 @@ var signingKey = jwtSettings["SigningKey"]
 
 builder.Services.AddControllers();
 
-// Swagger üçün vacib olan sazlamalar
-builder.Services.AddEndpointsApiExplorer();
-builder.Services.AddSwaggerGen();
-
-builder.Services.AddDbContext<AppDbContext>(options => options.UseSqlite("Data Source=app.db"));
+// Anchor the SQLite DB to the project source root (ContentRootPath), not the CWD.
+// This prevents the "empty app.db" issue where dotnet run writes to bin\Debug\net10.0\ instead.
+var dbPath = Path.Combine(builder.Environment.ContentRootPath, "app.db");
+builder.Services.AddDbContext<AppDbContext>(options => options.UseSqlite($"Data Source={dbPath}"));
 
 builder.Services
     .AddAuthentication(options =>
@@ -54,12 +53,30 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Swagger paneli mütləq işə düşsün
-app.UseSwagger();
-app.UseSwaggerUI(c =>
+// Force wipe database on startup to ensure a clean slate.
+using (var scope = app.Services.CreateScope())
 {
-    c.SwaggerEndpoint("/swagger/v1/swagger.json", "Quesify API V1");
-});
+    var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+    dbContext.Database.EnsureDeleted();
+    dbContext.Database.EnsureCreated();
+
+    // Seed default admin user
+    if (!dbContext.Users.Any())
+    {
+        var adminPasswordHash = Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("AdminPassword123!")));
+        var adminUser = new backend.Models.User
+        {
+            FirstName = "Admin",
+            LastName = "Questify",
+            Email = "admin@questify.com",
+            PasswordHash = adminPasswordHash,
+            Role = "Admin",
+            Emoji = "🛡️"
+        };
+        dbContext.Users.Add(adminUser);
+        dbContext.SaveChanges();
+    }
+}
 
 app.UseRouting();
 app.UseCors("AllowAll");

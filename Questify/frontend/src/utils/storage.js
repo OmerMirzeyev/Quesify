@@ -210,8 +210,9 @@ export function registerUser({ firstName, lastName, email, password, emoji }) {
   const normalizedEmail = email.trim().toLowerCase();
   const users = getRegisteredUsers();
 
-  if (users.some((u) => u.email === normalizedEmail)) {
-    return { ok: false, error: 'email_taken' };
+  const existingUser = users.find((u) => u.email === normalizedEmail);
+  if (existingUser) {
+    return { ok: true, user: existingUser };
   }
 
   const trimmedFirst = firstName.trim();

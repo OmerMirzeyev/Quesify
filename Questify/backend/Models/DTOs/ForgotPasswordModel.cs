@@ -3,14 +3,10 @@ using System.Text.Json.Serialization;
 
 namespace backend.Models.DTOs;
 
-public class LoginModel
+public class ForgotPasswordModel
 {
     [Required]
     [EmailAddress]
     [JsonPropertyName("email")]
     public string Email { get; set; } = string.Empty;
-
-    [Required]
-    [JsonPropertyName("password")]
-    public string Password { get; set; } = string.Empty;
 }
