@@ -158,7 +158,11 @@ export default function QuestsGrid() {
     activeProgrammingLanguage,
     claimedChests,
     claimTreasureChest,
+    user,
+    mapProgress,
   } = useApp();
+
+  const isAdmin = user?.role === 'Admin';
 
   const [selectedQuest, setSelectedQuest] = useState(null);
   const [selectedChapterIdx, setSelectedChapterIdx] = useState(0);
@@ -221,12 +225,22 @@ export default function QuestsGrid() {
 
   const isQuestUnlocked = useCallback(
     (index) => {
+      if (isAdmin) return true;  // Admin sees all levels unlocked
+
+      // Prefer the backend-synced unlock state when a row exists for this level (written the
+      // first time a level in this chapter is completed via /api/map/complete) — falls back to
+      // the local completedQuests-derived logic below when offline or not yet synced.
+      const serverEntry = mapProgress.find(
+        (p) => p.track === activeProgrammingLanguage && p.chapterIndex === selectedChapterIdx && p.levelIndex === index
+      );
+      if (serverEntry) return serverEntry.isUnlocked;
+
       if (selectedChapterIdx === 1 && !isCh1Completed) return false;
       if (index === 0) return true;
       const prevQuest = currentChapterQuests[index - 1];
       return prevQuest ? activeCompleted.includes(prevQuest.id) : false;
     },
-    [selectedChapterIdx, isCh1Completed, currentChapterQuests, activeCompleted]
+    [isAdmin, mapProgress, activeProgrammingLanguage, selectedChapterIdx, isCh1Completed, currentChapterQuests, activeCompleted]
   );
 
   const resetMapScroll = useCallback(() => {
@@ -278,12 +292,12 @@ export default function QuestsGrid() {
             </button>
             <button
               type="button"
-              onClick={() => isCh1Completed && setSelectedChapterIdx(1)}
+              onClick={() => (isAdmin || isCh1Completed) && setSelectedChapterIdx(1)}
               className={`btn btn-sm ${selectedChapterIdx === 1 ? 'btn-primary' : 'btn-outline'}`}
-              disabled={!isCh1Completed}
-              style={{ opacity: isCh1Completed ? 1 : 0.55 }}
+              disabled={!isAdmin && !isCh1Completed}
+              style={{ opacity: (isAdmin || isCh1Completed) ? 1 : 0.55 }}
             >
-              {!isCh1Completed && '🔒 '}2. İrəliləmiş
+              {!isAdmin && !isCh1Completed && '🔒 '}2. İrəliləmiş
             </button>
           </div>
         </div>

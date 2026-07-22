@@ -9,8 +9,13 @@ export default function ProfilePage() {
     activeAvatarUrl, setActiveAvatarUrl,
     updateUsername,
     customProfileImage, setCustomProfileImage, clearCustomProfilePhoto,
-    failedQuestions, solveFailedQuestion, achievements
+    failedQuestions, solveFailedQuestion, achievements,
+    dynamicShopItems,
   } = useApp();
+
+  // Prefer the backend-loaded catalog (same source GoldShop/equipAvatar use) so avatars added
+  // via the admin panel actually show up here instead of only in the static mock list.
+  const allShopItems = dynamicShopItems.length > 0 ? dynamicShopItems : shopItems;
 
   const [usernameInput, setUsernameInput] = useState(user.username);
   const [saveSuccess, setSaveSuccess] = useState(false);
@@ -25,11 +30,11 @@ export default function ProfilePage() {
   const [retryIsCorrect, setRetryIsCorrect] = useState(false);
 
   // All avatar-type shop items
-  const allAvatars = shopItems.filter(i => i.itemType === 'avatar');
+  const allAvatars = allShopItems.filter(i => i.itemType === 'avatar');
 
   // Resolve currently displayed avatar: custom image (activeAvatarUrl / customProfileImage) or active avatar emoji
   const activeAvatarEmoji = activeAvatarUrl || (activeAvatarId
-    ? (shopItems.find(i => i.id === activeAvatarId)?.emoji ?? user.emoji)
+    ? (allShopItems.find(i => i.id === activeAvatarId)?.emoji ?? user.emoji)
     : user.emoji);
 
   const handleImageUpload = (e) => {
@@ -72,10 +77,11 @@ export default function ProfilePage() {
     return 'rarity-common';
   };
 
+  const isAdmin = user.role === 'Admin' || user.role === 'AdminRole';
   const gameAssets = [
     { icon: '⭐', label: t('assetLevel'), value: user.level, color: 'var(--accent-gold-light)' },
     { icon: '🔷', label: t('assetXp'), value: `${user.xp} / ${user.maxXp}`, color: 'var(--accent-cyan)' },
-    { icon: '🪙', label: t('assetGold'), value: user.gold.toLocaleString(), color: 'var(--accent-gold-light)' },
+    { icon: '🪙', label: t('assetGold'), value: isAdmin ? '∞' : user.gold.toLocaleString(), color: 'var(--accent-gold-light)' },
     { icon: '❤️', label: t('assetHearts'), value: `${user.hearts} / 3`, color: '#ef4444' },
     { icon: '🃏', label: t('assetJokers'), value: user.jokers, color: 'var(--accent-purple-light)' },
   ];

@@ -5,7 +5,7 @@ import MainApp from './components/MainApp';
 import { isAppAdmin } from './utils/storage';
 
 function AppContent() {
-  const { isLoggedIn, isHydrated, user, currentTab, setCurrentTab, userRole } = useApp();
+  const { isLoggedIn, isHydrated, user, currentTab, setCurrentTab, userRole, isBanned } = useApp();
   const isAdmin = isAppAdmin(userRole);
 
   // Kick demoted admins off the Admin panel immediately
@@ -42,6 +42,31 @@ function AppContent() {
         <span style={{ fontWeight: 700, fontSize: '0.9rem', letterSpacing: '0.5px' }}>
           QUESTIFY yüklənir...
         </span>
+      </div>
+    );
+  }
+
+  if (isLoggedIn && isBanned) {
+    return (
+      <div
+        style={{
+          minHeight: '100vh',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: '1rem',
+          background: 'var(--bg-primary)',
+          color: 'var(--accent-red)',
+          textAlign: 'center',
+          padding: '2rem',
+        }}
+      >
+        <span style={{ fontSize: '4rem' }}>🚫</span>
+        <h1 style={{ fontFamily: 'var(--font-display)', fontWeight: 900, color: 'var(--accent-red)' }}>Hesabınız bloklanıb!</h1>
+        <p style={{ color: 'var(--text-secondary)', maxWidth: '400px', lineHeight: '1.6' }}>
+          Ətraflı məlumat üçün administratorla əlaqə saxlayın.
+        </p>
       </div>
     );
   }

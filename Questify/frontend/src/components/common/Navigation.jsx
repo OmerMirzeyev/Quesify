@@ -88,7 +88,7 @@ export default function Navigation() {
 
         {/* Gold Badge */}
         <div className="nav-gold-badge">
-          🪙 <span id="nav-gold-count">{user.gold.toLocaleString()}</span>
+          🪙 <span id="nav-gold-count">{isAppAdmin(userRole) ? '∞' : user.gold.toLocaleString()}</span>
         </div>
 
         {/* Notification Bell — dropdown opens below, no tab change */}

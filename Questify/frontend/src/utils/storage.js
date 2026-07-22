@@ -91,6 +91,15 @@ export function getAuthToken() {
   }
 }
 
+export function getAuthTokenExpiration() {
+  if (!isBrowser()) return null;
+  try {
+    return localStorage.getItem(STORAGE_KEYS.AUTH_TOKEN_EXPIRATION);
+  } catch {
+    return null;
+  }
+}
+
 export function setAuthSession({ token, role, expiration }) {
   if (!isBrowser()) return;
   try {
@@ -206,7 +215,7 @@ export function saveStoredQuests(quests) {
   localStorage.setItem(STORAGE_KEYS.QUESTS, JSON.stringify(quests));
 }
 
-export function registerUser({ firstName, lastName, email, password, emoji }) {
+export function registerUser({ firstName, lastName, email, password, emoji, avatarUrl }) {
   const normalizedEmail = email.trim().toLowerCase();
   const users = getRegisteredUsers();
 
@@ -239,6 +248,8 @@ export function registerUser({ firstName, lastName, email, password, emoji }) {
   const progress = {
     ...DEFAULT_USER_PROGRESS,
     welcomeBonusClaimed: true,  // Mark as claimed on registration
+    customProfileImage: avatarUrl && avatarUrl.startsWith('data:image/') ? avatarUrl : null,
+    activeAvatarUrl: avatarUrl || chosenEmoji,
     user: {
       ...DEFAULT_USER_PROGRESS.user,
       username: displayName,
@@ -380,7 +391,9 @@ export function buildProgressSnapshot(state) {
 export function getLeaderboardForTrack(track, currentSessionEmail = null) {
   const normalizedSession = currentSessionEmail?.toLowerCase() ?? null;
 
-  return getRegisteredUsers().map((reg) => {
+  return getRegisteredUsers()
+    .filter((reg) => reg.role !== 'Admin')   // exclude admin accounts
+    .map((reg) => {
     const progress = getUserProgress(reg.email);
     const stats = progress.trackStats?.[track] || { xp: 0, gold: 0 };
 
@@ -407,7 +420,9 @@ export function getLeaderboardForTrack(track, currentSessionEmail = null) {
 export function getGlobalLeaderboard(currentSessionEmail = null) {
   const normalizedSession = currentSessionEmail?.toLowerCase() ?? null;
 
-  return getRegisteredUsers().map((reg) => {
+  return getRegisteredUsers()
+    .filter((reg) => reg.role !== 'Admin')   // exclude admin accounts
+    .map((reg) => {
     const progress = getUserProgress(reg.email);
     const trackStats = progress.trackStats || EMPTY_TRACK_STATS();
 
@@ -448,6 +463,8 @@ export function getAllUsersDirectory(currentSessionEmail = null) {
       gold: progress.user.gold,
       xp: progress.user.xp,
       role: reg.role,
+      isBanned: reg.isBanned ?? false,
+      timeoutUntil: reg.timeoutUntil ?? null,
       isCurrentUser: normalizedSession === reg.email,
     };
   });
@@ -509,4 +526,15 @@ export function normalizeRole(role) {
 
 export function isAdminRole(role) {
   return role === 'Admin' || role === 'AdminRole';
+}
+
+export function updateRegisteredUserByEmail(email, updates) {
+  const normalizedEmail = email.trim().toLowerCase();
+  const users = getRegisteredUsers();
+  const idx = users.findIndex((u) => u.email === normalizedEmail);
+  if (idx === -1) return null;
+
+  users[idx] = { ...users[idx], ...updates };
+  saveRegisteredUsers(users);
+  return users[idx];
 }

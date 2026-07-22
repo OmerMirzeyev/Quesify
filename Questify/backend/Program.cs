@@ -1,5 +1,8 @@
 using System.Text;
 using backend.Data;
+using backend.Filters;
+using backend.Models;
+using backend.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.IdentityModel.Tokens;
@@ -8,9 +11,18 @@ var builder = WebApplication.CreateBuilder(args);
 
 var jwtSettings = builder.Configuration.GetSection("Jwt");
 var signingKey = jwtSettings["SigningKey"]
-    ?? throw new InvalidOperationException("JWT SigningKey is not configured.");
+    ?? throw new InvalidOperationException(
+        "JWT SigningKey is not configured. Set it via 'dotnet user-secrets set \"Jwt:SigningKey\" \"...\"' " +
+        "in Development, or the Jwt__SigningKey environment variable elsewhere.");
 
-builder.Services.AddControllers();
+builder.Services.AddControllers(options =>
+{
+    // Rejects requests from an already-issued token if the user was banned/timed-out
+    // after the token was issued (Login already blocks issuing a new token for them).
+    options.Filters.Add<BanEnforcementFilter>();
+});
+
+builder.Services.AddSingleton<IPasswordHasher, PasswordHasher>();
 
 // Anchor the SQLite DB to the project source root (ContentRootPath), not the CWD.
 // This prevents the "empty app.db" issue where dotnet run writes to bin\Debug\net10.0\ instead.
@@ -40,11 +52,16 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
+// Configurable via appsettings' "AllowedOrigins" array (e.g. add a deployed frontend origin
+// there) — falls back to the two local Vite dev ports if not set.
+var allowedOrigins = builder.Configuration.GetSection("AllowedOrigins").Get<string[]>()
+    ?? new[] { "http://localhost:5173", "http://localhost:5174" };
+
 builder.Services.AddCors(options =>
 {
-    options.AddPolicy("AllowAll", policy =>
+    options.AddPolicy("Default", policy =>
     {
-        policy.WithOrigins("http://localhost:5174", "http://localhost:5173")
+        policy.WithOrigins(allowedOrigins)
             .AllowAnyHeader()
             .AllowAnyMethod()
             .AllowCredentials();
@@ -53,33 +70,44 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
-// Force wipe database on startup to ensure a clean slate.
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
-    dbContext.Database.EnsureDeleted();
-    dbContext.Database.EnsureCreated();
 
-    // Seed default admin user
-    if (!dbContext.Users.Any())
+    // Applies pending EF Core migrations, creating the DB on first run — does NOT drop
+    // existing data on restart (this used to call EnsureDeleted()+EnsureCreated() on every
+    // startup, wiping the entire database every time the app restarted).
+    dbContext.Database.Migrate();
+
+    // Ensure the built-in "Admin Questify" account exists and is always Role="Admin" — this
+    // self-heals on every startup (not just when the Users table is empty), so it can never be
+    // left demoted by, e.g., an accidental role-change through the admin panel.
+    var adminUser = dbContext.Users.FirstOrDefault(u => u.Email == "admin@questify.com");
+    if (adminUser is null)
     {
-        var adminPasswordHash = Convert.ToBase64String(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes("AdminPassword123!")));
-        var adminUser = new backend.Models.User
+        var passwordHasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher>();
+        adminUser = new User
         {
             FirstName = "Admin",
             LastName = "Questify",
             Email = "admin@questify.com",
-            PasswordHash = adminPasswordHash,
+            PasswordHash = passwordHasher.HashPassword("AdminPassword123!"),
             Role = "Admin",
             Emoji = "🛡️"
         };
         dbContext.Users.Add(adminUser);
-        dbContext.SaveChanges();
     }
+    else if (adminUser.Role != "Admin")
+    {
+        adminUser.Role = "Admin";
+    }
+    dbContext.SaveChanges();
+
+    ShopSeeder.SeedIfEmpty(dbContext);
 }
 
 app.UseRouting();
-app.UseCors("AllowAll");
+app.UseCors("Default");
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();

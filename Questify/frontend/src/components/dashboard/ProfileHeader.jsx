@@ -1,9 +1,11 @@
 import React from 'react';
+import { ShieldCheck } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { shopItems } from '../../data/mockData';
 
 export default function ProfileHeader() {
   const { user, t, timeUntilNextHeart, activeAvatarId, activeAvatarUrl } = useApp();
+  const isAdmin = user.role === 'Admin' || user.role === 'AdminRole';
 
   // Resolve the displayed avatar: activeAvatarUrl > active avatar emoji > user default emoji
   const resolvedAvatar = activeAvatarUrl || (activeAvatarId
@@ -43,14 +45,18 @@ export default function ProfileHeader() {
               fontWeight: 700,
               padding: '0.15rem 0.55rem',
               borderRadius: '100px',
-              background: user.role === 'Admin' || user.role === 'AdminRole' ? 'rgba(245,158,11,0.15)' : 'rgba(139,92,246,0.15)',
-              border: `1px solid ${user.role === 'Admin' || user.role === 'AdminRole' ? 'rgba(245,158,11,0.4)' : 'rgba(139,92,246,0.4)'}`,
-              color: user.role === 'Admin' || user.role === 'AdminRole' ? 'var(--accent-gold-light)' : 'var(--accent-purple-light)',
+              background: isAdmin ? 'rgba(245,158,11,0.15)' : 'rgba(139,92,246,0.15)',
+              border: `1px solid ${isAdmin ? 'rgba(245,158,11,0.4)' : 'rgba(139,92,246,0.4)'}`,
+              color: isAdmin ? 'var(--accent-gold-light)' : 'var(--accent-purple-light)',
               textTransform: 'uppercase',
               letterSpacing: '0.5px',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.3rem',
             }}
           >
-            {user.role === 'Admin' || user.role === 'AdminRole' ? t('adminRole') : t('userRole')}
+            {isAdmin && <ShieldCheck size={12} />}
+            {isAdmin ? t('adminRole') : t('userRole')}
           </span>
         </div>
         <div className="profile-xp-label">
@@ -69,7 +75,7 @@ export default function ProfileHeader() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-end', minWidth: '150px' }}>
         <div className="profile-gold-box">
           <span className="profile-gold-icon">🪙</span>
-          <span className="profile-gold-amount">{user.gold.toLocaleString()}</span>
+          <span className="profile-gold-amount">{isAdmin ? '∞' : user.gold.toLocaleString()}</span>
         </div>
 
         {/* Hearts UI */}

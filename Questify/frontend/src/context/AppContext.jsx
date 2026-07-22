@@ -4,8 +4,10 @@ import {
   initialQuestsJava,
   initialQuestsPython,
   shopItems,
+  QUESTS_BY_CHAPTER,
 } from '../data/mockData';
 import { translations } from '../i18n/translations';
+import { apiFetch } from '../utils/api';
 import {
   authenticateUser,
   registerUser,
@@ -33,6 +35,8 @@ import {
   EMPTY_TRACK_STATS,
   ALL_TRACKS as STORAGE_TRACKS,
   getRegisteredUsers,
+  updateRegisteredUserByEmail,
+  getAuthTokenExpiration,
 } from '../utils/storage';
 
 const AppContext = createContext(null);
@@ -84,6 +88,9 @@ export const AppProvider = ({ children }) => {
   const [activeAvatarId, setActiveAvatarId] = useState(1);
   const [customProfileImage, setCustomProfileImage] = useState(null);
   const [activeAvatarUrl, setActiveAvatarUrl] = useState('🎮');
+  const [isBanned, setIsBanned] = useState(false);
+  const [timeoutUntil, setTimeoutUntil] = useState(null);
+  const [dynamicShopItems, setDynamicShopItems] = useState([]);
 
   const [failedQuestions, setFailedQuestions] = useState([]);
   const [lastSpinTime, setLastSpinTime] = useState(null);
@@ -106,48 +113,268 @@ export const AppProvider = ({ children }) => {
 
   const [usersList, setUsersList] = useState([]);
 
+  // Coin wallet (backend-authoritative shop currency — separate from the legacy local
+  // `gold`/XP economy, which stays client-side for this pass).
+  const [coins, setCoins] = useState(0);
+  const [hasUnlimitedCoins, setHasUnlimitedCoins] = useState(false);
+  // Full owned-items list from the backend (covers every cosmetic category — avatar/frame/theme/
+  // badge — not just the legacy avatar-only purchasedItems/ownedAvatarIds arrays below).
+  const [marketInventory, setMarketInventory] = useState([]);
+  // Backend-authoritative map unlock/completion state: [{track, chapterIndex, levelIndex, isUnlocked, isCompleted}]
+  const [mapProgress, setMapProgress] = useState([]);
+  // One-shot "next completed level gives 2x XP" flag, consumed by a Double XP Potion purchase.
+  const [doubleXpPending, setDoubleXpPending] = useState(false);
+  const [streakFreezes, setStreakFreezes] = useState(0);
+
+  // Load shop items from backend on mount
+  const loadShopItems = async () => {
+    try {
+      const { ok, data } = await apiFetch('/api/shop');
+      if (ok) setDynamicShopItems(data);
+    } catch { /* offline fallback to mockData */ }
+  };
+
+  // Admin ban/timeout poll — check every 30s
+  const checkBanStatus = async (email) => {
+    if (!email) return;
+    try {
+      const { ok, data } = await apiFetch(`/api/auth/status?email=${encodeURIComponent(email)}`, { auth: true });
+      if (ok) {
+        setIsBanned(data.isBanned ?? false);
+        setTimeoutUntil(data.timeoutUntil ? new Date(data.timeoutUntil) : null);
+      }
+    } catch { /* ignore network errors */ }
+  };
+
+  // Sync profile (avatar/emoji) to backend — target user is derived from the caller's own JWT
+  const syncProfileToBackend = async (avatarUrl, emoji) => {
+    try {
+      await apiFetch('/api/auth/update-profile', {
+        method: 'POST',
+        auth: true,
+        body: { avatarUrl, emoji },
+      });
+    } catch { /* offline — state already persisted locally */ }
+  };
+
+  // Coin wallet + inventory (backend-authoritative)
+  const loadMarketInventory = async () => {
+    try {
+      const { ok, data } = await apiFetch('/api/market/inventory', { auth: true });
+      if (ok) {
+        setCoins(data.coins ?? 0);
+        setHasUnlimitedCoins(data.hasUnlimitedCoins ?? false);
+        setMarketInventory(data.inventory || []);
+        applyEquippedTheme(data.inventory || []);
+      }
+    } catch { /* offline — keep last known balance */ }
+  };
+
+  // Custom Neon Theme — a lightweight CSS-variable override rather than a full theming engine.
+  // Looks up the equipped "theme" inventory row's matching shop item (for its color) and applies
+  // it as an accent override; clears back to the default palette when nothing is equipped.
+  const applyEquippedTheme = (inventory) => {
+    const equippedTheme = inventory.find((i) => i.itemType === 'theme' && i.isEquipped);
+    const root = document.documentElement;
+    if (equippedTheme) {
+      const shopEntry = dynamicShopItems.find((s) => s.id === equippedTheme.shopItemId);
+      const color = shopEntry?.gameColor || '#8b5cf6';
+      root.style.setProperty('--accent-purple-light', color);
+      root.style.setProperty('--glow-purple', `0 0 24px ${color}66`);
+      root.setAttribute('data-neon-theme', 'active');
+    } else {
+      root.style.removeProperty('--accent-purple-light');
+      root.style.removeProperty('--glow-purple');
+      root.removeAttribute('data-neon-theme');
+    }
+  };
+
+  // POST /api/market/equip — used for frame/theme (and, via the existing equipAvatar wrapper
+  // below, avatar) single-slot cosmetics.
+  const equipMarketItem = async (shopItemId) => {
+    try {
+      const { ok, status } = await apiFetch('/api/market/equip', {
+        method: 'POST',
+        auth: true,
+        body: { shopItemId },
+      });
+      if (ok) {
+        await loadMarketInventory();
+        showToast('Təchiz edildi!', '✨');
+      } else {
+        showToast(`Xəta: ${status}`, '❌');
+      }
+      return ok;
+    } catch { showToast('Əlaqə xətası', '❌'); return false; }
+  };
+
+  // Map progress (backend-authoritative unlock/completion state)
+  const loadMapProgress = async (track = null) => {
+    try {
+      const qs = track ? `?track=${encodeURIComponent(track)}` : '';
+      const { ok, data } = await apiFetch(`/api/map/progress${qs}`, { auth: true });
+      if (ok) setMapProgress(data.progress || []);
+    } catch { /* offline — QuestsGrid falls back to local completedQuests */ }
+  };
+
+  const syncMapCompletion = async (track, chapterIndex, levelIndex, isLastLevelOfChapter) => {
+    try {
+      await apiFetch('/api/map/complete', {
+        method: 'POST',
+        auth: true,
+        body: { track, chapterIndex, levelIndex, isLastLevelOfChapter },
+      });
+      loadMapProgress(track);
+    } catch { /* offline — local completedQuests still gates progress */ }
+  };
+
+  // Admin shop management
+  const adminAddShopItem = async (newItem) => {
+    try {
+      const { ok, status } = await apiFetch('/api/shop', {
+        method: 'POST',
+        auth: true,
+        body: newItem,
+      });
+      if (ok) {
+        await loadShopItems();
+        showToast(`"${newItem.name}" mağazaya əlavə edildi!`, '🛒');
+      } else {
+        showToast(`Xəta: ${status}`, '❌');
+      }
+    } catch { showToast('Əlaqə xətası', '❌'); }
+  };
+
+  const adminDeleteShopItem = async (itemId, itemName) => {
+    try {
+      const { ok, status } = await apiFetch(`/api/shop/${itemId}`, { method: 'DELETE', auth: true });
+      if (ok) {
+        await loadShopItems();
+        showToast(`"${itemName}" silindi!`, '🗑️');
+      } else {
+        showToast(`Xəta: ${status}`, '❌');
+      }
+    } catch { showToast('Əlaqə xətası', '❌'); }
+  };
+
+  // Admin stock adjustment — `stock=null` (unlimited=true) clears the limit; otherwise sets the
+  // absolute new value (the store page's +/- controls compute the new number and call this).
+  const adminSetShopItemStock = async (itemId, stock, unlimited = false) => {
+    try {
+      const qs = unlimited ? 'unlimited=true' : `stock=${Number(stock)}`;
+      const { ok, status } = await apiFetch(`/api/shop/${itemId}/stock?${qs}`, { method: 'POST', auth: true });
+      if (ok) {
+        await loadShopItems();
+      } else {
+        showToast(`Xəta: ${status}`, '❌');
+      }
+      return ok;
+    } catch { showToast('Əlaqə xətası', '❌'); return false; }
+  };
+
+  // Admin user moderation (email-based to bridge localStorage IDs vs DB IDs)
+  const adminBanUser = async (userId, email) => {
+    try {
+      const { ok, status } = await apiFetch(`/api/admin/ban/by-email?email=${encodeURIComponent(email)}`, { method: 'POST', auth: true });
+      if (ok) {
+        showToast(`${email} blokland\u0131`, '\ud83d\udeab');
+        updateRegisteredUserByEmail(email, { isBanned: true, timeoutUntil: null });
+        setUsersList(prev => prev.map(u => u.email === email ? { ...u, isBanned: true, timeoutUntil: null } : u));
+      } else {
+        showToast(`X\u0259ta: ${status}`, '\u274c');
+      }
+    } catch { showToast('\u018flaq\u0259 x\u0259tas\u0131', '\u274c'); }
+  };
+
+  const adminUnbanUser = async (userId, email) => {
+    try {
+      const { ok, status } = await apiFetch(`/api/admin/unban/by-email?email=${encodeURIComponent(email)}`, { method: 'POST', auth: true });
+      if (ok) {
+        showToast(`${email} bloku a\u00e7\u0131ld\u0131`, '\u2705');
+        updateRegisteredUserByEmail(email, { isBanned: false });
+        setUsersList(prev => prev.map(u => u.email === email ? { ...u, isBanned: false } : u));
+      } else {
+        showToast(`X\u0259ta: ${status}`, '\u274c');
+      }
+    } catch { showToast('\u018flaq\u0259 x\u0259tas\u0131', '\u274c'); }
+  };
+
+  const adminTimeoutUser = async (userId, email, minutes = 10) => {
+    try {
+      const { ok, status, data } = await apiFetch(`/api/admin/timeout/by-email?email=${encodeURIComponent(email)}&minutes=${minutes}`, { method: 'POST', auth: true });
+      if (ok) {
+        showToast(`${email} ${minutes} d\u0259qiq\u0259 m\u0259hdudla\u015fd\u0131r\u0131ld\u0131`, '\u23f1\ufe0f');
+        updateRegisteredUserByEmail(email, { timeoutUntil: data.timeoutUntil });
+        setUsersList(prev => prev.map(u => u.email === email ? { ...u, timeoutUntil: data.timeoutUntil } : u));
+      } else {
+        showToast(`X\u0259ta: ${status}`, '\u274c');
+      }
+    } catch { showToast('\u018flaq\u0259 x\u0259tas\u0131', '\u274c'); }
+  };
+
+  const adminRemoveTimeout = async (userId, email) => {
+    try {
+      const { ok, status } = await apiFetch(`/api/admin/remove-timeout/by-email?email=${encodeURIComponent(email)}`, { method: 'POST', auth: true });
+      if (ok) {
+        showToast(`${email} m\u0259hdudiyy\u0259ti g\u00f6t\u00fcr\u00fcld\u00fc`, '\u2705');
+        updateRegisteredUserByEmail(email, { timeoutUntil: null });
+        setUsersList(prev => prev.map(u => u.email === email ? { ...u, timeoutUntil: null } : u));
+      } else {
+        showToast(`X\u0259ta: ${status}`, '\u274c');
+      }
+    } catch { showToast('\u018flaq\u0259 x\u0259tas\u0131', '\u274c'); }
+  };
+
+  // Admin overrides: coins / unlimited coins / role / delete user \u2014 real backend calls,
+  // replacing what used to be localStorage-only edits with no server-side effect.
+  const adminSetCoins = async (email, amount) => {
+    try {
+      const { ok, status, data } = await apiFetch(`/api/admin/coins/by-email?email=${encodeURIComponent(email)}&amount=${Number(amount)}`, { method: 'POST', auth: true });
+      if (ok) {
+        showToast(`${email} \u2192 \ud83e\ude99 ${data.coins}`, '\ud83e\ude99');
+        if (email.toLowerCase() === sessionEmail?.toLowerCase()) setCoins(data.coins);
+      } else {
+        showToast(`X\u0259ta: ${status}`, '\u274c');
+      }
+      return ok;
+    } catch { showToast('\u018flaq\u0259 x\u0259tas\u0131', '\u274c'); return false; }
+  };
+
+  const adminSetUnlimitedCoins = async (email, enabled) => {
+    try {
+      const { ok, status, data } = await apiFetch(`/api/admin/coins/unlimited/by-email?email=${encodeURIComponent(email)}&enabled=${enabled}`, { method: 'POST', auth: true });
+      if (ok) {
+        showToast(`${email} \u2192 limitsiz coin: ${enabled ? 'A\u00c7IQ' : 'BA\u011eLI'}`, '\u267e\ufe0f');
+        if (email.toLowerCase() === sessionEmail?.toLowerCase()) setHasUnlimitedCoins(data.hasUnlimitedCoins);
+      } else {
+        showToast(`X\u0259ta: ${status}`, '\u274c');
+      }
+      return ok;
+    } catch { showToast('\u018flaq\u0259 x\u0259tas\u0131', '\u274c'); return false; }
+  };
+
+  const adminSetRole = async (email, role) => {
+    try {
+      const { ok, status } = await apiFetch(`/api/admin/role/by-email?email=${encodeURIComponent(email)}&role=${encodeURIComponent(role)}`, { method: 'POST', auth: true });
+      if (!ok) showToast(`X\u0259ta: ${status}`, '\u274c');
+      return ok;
+    } catch { showToast('\u018flaq\u0259 x\u0259tas\u0131', '\u274c'); return false; }
+  };
+
+  const adminDeleteUserBackend = async (email) => {
+    try {
+      const { ok, status } = await apiFetch(`/api/admin/users/by-email?email=${encodeURIComponent(email)}`, { method: 'DELETE', auth: true });
+      if (!ok) showToast(`X\u0259ta: ${status}`, '\u274c');
+      return ok;
+    } catch { showToast('\u018flaq\u0259 x\u0259tas\u0131', '\u274c'); return false; }
+  };
+
   // New features added for state integration (loaded per user)
   const [friends, setFriends] = useState([]);
   const [friendRequests, setFriendRequests] = useState([]);
   const [chats, setChats] = useState({});
   const [claimedChests, setClaimedChests] = useState([]);
   const [notifications, setNotifications] = useState([]);
-
-  // Default notifications for a new user
-  const getInitialNotifications = () => [
-    {
-      id: 1,
-      type: 'system',
-      message: 'Questify platformasına xoş gəlmisiniz! 🚀',
-      icon: '🎉',
-      isRead: false,
-      timestamp: Date.now() - 3600000 * 3,
-    },
-    {
-      id: 2,
-      type: 'friend',
-      message: 'Kamal sizə mesaj göndərdi: "Bugün C# tapşırığını bitirək?" 💬',
-      icon: '👤',
-      isRead: false,
-      timestamp: Date.now() - 3600000 * 2,
-    },
-    {
-      id: 3,
-      type: 'chapter',
-      message: '2-ci Fəsil kilidini açmaq üçün 1-ci Fəsilin 20 səviyyəsini tamamlayın! 🔓',
-      icon: '🗺️',
-      isRead: false,
-      timestamp: Date.now() - 3600000,
-    },
-    {
-      id: 4,
-      type: 'info',
-      message: 'Çərx-i Fələk bölməsindən hər gün pulsuz hədiyyələr qazanın! 🎡',
-      icon: '🎁',
-      isRead: true,
-      timestamp: Date.now() - 1800000,
-    },
-  ];
 
   const skipPersistRef = useRef(false);
 
@@ -178,12 +405,13 @@ export const AppProvider = ({ children }) => {
     setFriendRequests(progress.friendRequests || []);
     setChats(progress.chats || {});
     setClaimedChests(progress.claimedChests || []);
-    setNotifications(progress.notifications && progress.notifications.length > 0 ? progress.notifications : getInitialNotifications());
+    setNotifications(progress.notifications || []);
   }, []);
 
   // Hydrate session and global quests on mount (F5 protection)
   useEffect(() => {
     setQuests(getStoredQuests()); // Hydrate quests from global shared storage
+    loadShopItems();              // Load dynamic shop items from backend
     const session = getSession();
     if (session?.email) {
       const progress = getUserProgress(session.email);
@@ -191,13 +419,30 @@ export const AppProvider = ({ children }) => {
       setSessionEmail(session.email);
       setUsersList(getAllUsersDirectory(session.email));
       setIsLoggedIn(true);
+      checkBanStatus(session.email);
+      loadMarketInventory();
+      loadMapProgress();
 
-      // Persist and check role via useEffect
-      const role = localStorage.getItem('userRole');
-      setUserRole(role || '');
+      // A JWT issued before a ban/timeout could otherwise keep granting admin calls past its
+      // expiry since nothing previously checked authTokenExpiration after writing it.
+      const tokenExpiration = getAuthTokenExpiration();
+      if (tokenExpiration && new Date(tokenExpiration) <= new Date()) {
+        clearAuthSession();
+        setUserRole('');
+      } else {
+        const role = localStorage.getItem('userRole');
+        setUserRole(role || '');
+      }
     }
     setIsHydrated(true);
   }, [applyProgress]);
+
+  // Poll ban/timeout status every 30s while logged in
+  useEffect(() => {
+    if (!isLoggedIn || !sessionEmail) return;
+    const interval = setInterval(() => checkBanStatus(sessionEmail), 30000);
+    return () => clearInterval(interval);
+  }, [isLoggedIn, sessionEmail]);
 
   // Keep leaderboard/admin list in sync with live stats
   useEffect(() => {
@@ -332,8 +577,8 @@ export const AppProvider = ({ children }) => {
     setTimeout(() => setToast(null), 3000);
   };
 
-  const register = ({ firstName, lastName, email, password, emoji }) => {
-    const result = registerUser({ firstName, lastName, email, password, emoji });
+  const register = ({ firstName, lastName, email, password, emoji, avatarUrl }) => {
+    const result = registerUser({ firstName, lastName, email, password, emoji, avatarUrl });
     if (!result.ok) return result;
     // Show welcome bonus toast after a small delay (caller handles modal close)
     setTimeout(() => {
@@ -342,12 +587,22 @@ export const AppProvider = ({ children }) => {
     return { ok: true, email: result.user.email };
   };
 
-  const login = (email, password) => {
+  const login = (email, password, backendData = null) => {
     const auth = authenticateUser(email, password);
     if (!auth.ok) return auth;
 
     skipPersistRef.current = true;
     const progress = getUserProgress(auth.user.email);
+    if (backendData) {
+      if (backendData.avatarUrl) {
+        progress.customProfileImage = backendData.avatarUrl;
+        progress.activeAvatarUrl = backendData.avatarUrl;
+        progress.activeAvatarId = null;
+      } else if (backendData.emoji) {
+        progress.activeAvatarUrl = backendData.emoji;
+        progress.customProfileImage = null;
+      }
+    }
     applyProgress(progress);
     setSessionEmail(auth.user.email);
     setSession(auth.user.email);
@@ -358,6 +613,9 @@ export const AppProvider = ({ children }) => {
     setUserRole(role);
 
     skipPersistRef.current = false;
+
+    loadMarketInventory();
+    loadMapProgress();
 
     return { ok: true, user: auth.user, role };
   };
@@ -376,6 +634,9 @@ export const AppProvider = ({ children }) => {
     setIsChatbotOpen(false);
     setChatbotAlert(false);
     setCurrentTab('dashboard');
+    setCoins(0);
+    setHasUnlimitedCoins(false);
+    setMapProgress([]);
   };
 
   const selectPrimaryLanguage = (lang) => {
@@ -445,6 +706,14 @@ export const AppProvider = ({ children }) => {
 
   const completeQuest = (quest) => {
     if (!activeProgrammingLanguage) return;
+
+    // Check timeout restriction
+    if (timeoutUntil && new Date() < new Date(timeoutUntil)) {
+      const remaining = Math.ceil((new Date(timeoutUntil) - new Date()) / 60000);
+      showToast(`Müvəqqəti məhdudiyyət — ${remaining} dəqiqə qalır`, '⏱️');
+      return;
+    }
+
     const currentList = completedQuests[activeProgrammingLanguage] || [];
     if (currentList.includes(quest.id)) return;
 
@@ -454,13 +723,32 @@ export const AppProvider = ({ children }) => {
       [activeProgrammingLanguage]: updatedList,
     }));
 
+    // Double XP Potion — consumed on the next completed level, one-shot.
+    const xpMultiplier = doubleXpPending ? 2 : 1;
+    const awardedXp = quest.xpReward * xpMultiplier;
+    if (doubleXpPending) {
+      setDoubleXpPending(false);
+      pushNotification('shop', `Double XP Potion istifadə edildi! +${awardedXp} XP (2x) ⚡`, '⚡');
+    }
+
     addGold(quest.goldReward);
-    addXp(quest.xpReward);
-    addTrackRewards(activeProgrammingLanguage, quest.goldReward, quest.xpReward);
-    showToast(`+${quest.goldReward} 🪙  +${quest.xpReward} XP qazandınız!`, '⭐');
+    addXp(awardedXp);
+    addTrackRewards(activeProgrammingLanguage, quest.goldReward, awardedXp);
+    showToast(`+${quest.goldReward} 🪙  +${awardedXp} XP${xpMultiplier > 1 ? ' (2x!)' : ''} qazandınız!`, '⭐');
 
     // Push quest completion notification
     pushNotification('quest', `${quest.title} mərhələsini tamamladınız! +${quest.goldReward} 🪙`, '🏆');
+
+    // Sync unlock/completion state to the backend so progress isn't only ever known to this browser
+    const trackChapters = QUESTS_BY_CHAPTER[activeProgrammingLanguage] || [];
+    for (let ci = 0; ci < trackChapters.length; ci++) {
+      const li = (trackChapters[ci] || []).findIndex((q) => q.id === quest.id);
+      if (li !== -1) {
+        const isLastLevelOfChapter = li === trackChapters[ci].length - 1;
+        syncMapCompletion(activeProgrammingLanguage, ci, li, isLastLevelOfChapter);
+        break;
+      }
+    }
 
     // Check if Map 1 (Chapter 1) is fully completed (exactly 20 levels completed)
     // Map 1 levels have IDs 1-20
@@ -491,23 +779,18 @@ export const AppProvider = ({ children }) => {
     return false;
   };
 
-  const buyItem = (item) => {
-    if (user.gold < item.price) return false;
+  // Spends real backend-tracked Coins (not the legacy local `gold`) and records the purchase
+  // server-side via /api/market/purchase — this used to be a purely local/optimistic mutation
+  // that the backend never learned about at all.
+  const buyItem = async (item) => {
+    if (!hasUnlimitedCoins && coins < item.price) {
+      showToast('Kifayət qədər coin yoxdur', '⚠️');
+      return false;
+    }
 
-    if (item.itemType === 'avatar' || item.itemType === 'badge') {
-      if (purchasedItems.includes(item.id)) return false;
-      spendGold(item.price);
-      setPurchasedItems((prev) => [...prev, item.id]);
-
-      if (item.itemType === 'avatar') {
-        setOwnedAvatarIds((prev) => [...prev, item.id]);
-        showToast(`"${item.name}" koleksiyona əlavə edildi! Profildən geyindirin 🎭`, '🛒');
-        pushNotification('shop', `"${item.name}" avatarı alındı! 🎭`, '🛒');
-      } else {
-        showToast(`"${item.name}" alındı! 🎉`, '🛒');
-        pushNotification('shop', `"${item.name}" nişanı alındı! 🏆`, '🛒');
-      }
-      return true;
+    const singleOwnedTypes = ['avatar', 'badge', 'frame', 'theme'];
+    if (singleOwnedTypes.includes(item.itemType) && marketInventory.some((i) => i.shopItemId === item.id)) {
+      return false;
     }
 
     if (item.itemType === 'potion_heart') {
@@ -522,32 +805,73 @@ export const AppProvider = ({ children }) => {
         showToast('Canınız onsuz da doludur!', '💖');
         return false;
       }
-      spendGold(item.price);
+    }
+
+    const { ok, status, data } = await apiFetch('/api/market/purchase', {
+      method: 'POST',
+      auth: true,
+      body: { shopItemId: item.id },
+    });
+
+    if (!ok) {
+      showToast(status === 400 ? (data?.message || 'Alına bilmədi') : 'Əlaqə xətası', '❌');
+      return false;
+    }
+
+    setCoins(data.coins);
+    setHasUnlimitedCoins(data.hasUnlimitedCoins);
+    loadShopItems(); // refresh catalog so stock counts (decremented server-side) stay live
+    loadMarketInventory(); // refresh owned-items list so the single-purchase check above stays accurate
+
+    if (item.itemType === 'avatar' || item.itemType === 'badge') {
+      setPurchasedItems((prev) => [...prev, item.id]);
+      if (item.itemType === 'avatar') {
+        setOwnedAvatarIds((prev) => [...prev, item.id]);
+        showToast(`"${item.name}" koleksiyona əlavə edildi! Profildən geyindirin 🎭`, '🛒');
+        pushNotification('shop', `"${item.name}" avatarı alındı! 🎭`, '🛒');
+      } else {
+        showToast(`"${item.name}" alındı! 🎉`, '🛒');
+        pushNotification('shop', `"${item.name}" nişanı alındı! 🏆`, '🛒');
+      }
+    } else if (item.itemType === 'frame') {
+      showToast(`"${item.name}" alındı! Mağazadan geyindirin 🖼️`, '🛒');
+      pushNotification('shop', `"${item.name}" çərçivəsi alındı!`, '🖼️');
+    } else if (item.itemType === 'theme') {
+      showToast(`"${item.name}" alındı! Mağazadan tətbiq edin 🎨`, '🛒');
+      pushNotification('shop', `"${item.name}" teması alındı!`, '🎨');
+    } else if (item.itemType === 'potion_heart') {
       setHeartPotionPurchasedAt(Date.now());
       setUser((prev) => ({ ...prev, hearts: Math.min(3, prev.hearts + 1) }));
       showToast('Can İksiri istifadə edildi! +1 Can', '💖');
       pushNotification('shop', 'Can İksiri istifadə edildi! +1 Can ❤️', '💖');
-      return true;
-    }
-
-    if (item.itemType === 'joker_5050') {
-      spendGold(item.price);
+    } else if (item.itemType === 'joker_5050') {
       setUser((prev) => ({ ...prev, jokers: prev.jokers + 1 }));
       showToast('50/50 Joker alındı!', '🃏');
       pushNotification('shop', '50/50 Joker alındı! 🃏', '🃏');
-      return true;
+    } else if (item.itemType === 'streak_freeze') {
+      setStreakFreezes((prev) => prev + 1);
+      showToast('Streak Freeze alındı! Növbəti buraxılan gündə streak qorunacaq.', '🧊');
+      pushNotification('shop', 'Streak Freeze alındı! 🧊', '🧊');
+    } else if (item.itemType === 'double_xp') {
+      setDoubleXpPending(true);
+      showToast('Double XP Potion aktivləşdi! Növbəti tamamladığınız səviyyə 2x XP verəcək.', '⚡');
+      pushNotification('shop', 'Double XP Potion aktivləşdi! ⚡', '⚡');
     }
 
-    return false;
+    return true;
   };
 
   const equipAvatar = (avatarId) => {
     if (!ownedAvatarIds.includes(avatarId)) return false;
     setActiveAvatarId(avatarId);
-    const item = shopItems.find((i) => i.id === avatarId);
+    // Check dynamic shop items first, fall back to static
+    const allItems = dynamicShopItems.length > 0 ? dynamicShopItems : shopItems;
+    const item = allItems.find((i) => i.id === avatarId);
     if (item) {
       setActiveAvatarUrl(item.emoji);
       setCustomProfileImage(null);
+      // Sync emoji to backend (target user comes from the caller's own JWT)
+      syncProfileToBackend(null, item.emoji);
     }
     return true;
   };
@@ -555,13 +879,16 @@ export const AppProvider = ({ children }) => {
   const setCustomProfilePhoto = (dataUrl) => {
     setCustomProfileImage(dataUrl);
     setActiveAvatarUrl(dataUrl);
+    // Sync custom photo to backend
+    syncProfileToBackend(dataUrl, null);
     setActiveAvatarId(null);
   };
 
   const clearCustomProfilePhoto = () => {
     setCustomProfileImage(null);
     const fallbackId = ownedAvatarIds.includes(activeAvatarId) ? activeAvatarId : ownedAvatarIds[0];
-    const item = shopItems.find((i) => i.id === fallbackId);
+    const allItems = dynamicShopItems.length > 0 ? dynamicShopItems : shopItems;
+    const item = allItems.find((i) => i.id === fallbackId);
     setActiveAvatarId(fallbackId ?? 1);
     setActiveAvatarUrl(item?.emoji ?? user.emoji);
   };
@@ -647,7 +974,7 @@ export const AppProvider = ({ children }) => {
     });
   };
 
-  const updateUserInfo = (userId, updatedFields) => {
+  const updateUserInfo = async (userId, updatedFields) => {
     const target = usersList.find((u) => u.id === userId);
     if (!target) return;
 
@@ -657,6 +984,9 @@ export const AppProvider = ({ children }) => {
 
     if (normalizedNewRole) {
       updateRegisteredUserById(userId, { role: normalizedNewRole });
+      // Mirror the role change to the real backend — this used to be a localStorage-only edit
+      // with no server-side effect at all.
+      adminSetRole(target.email, normalizedNewRole === 'Admin' ? 'Admin' : 'User');
     }
 
     const progressUpdates = {};
@@ -667,6 +997,14 @@ export const AppProvider = ({ children }) => {
     if (normalizedNewRole) progressUpdates.role = normalizedNewRole;
 
     updateUserProgressFields(target.email, progressUpdates);
+
+    // Coins/unlimited-coins are backend-authoritative — always a real call, never local-only.
+    if (updatedFields.coins !== undefined) {
+      adminSetCoins(target.email, updatedFields.coins);
+    }
+    if (updatedFields.hasUnlimitedCoins !== undefined) {
+      adminSetUnlimitedCoins(target.email, updatedFields.hasUnlimitedCoins);
+    }
 
     if (isSelf) {
       setUser((prev) => ({ ...prev, ...progressUpdates }));
@@ -681,10 +1019,13 @@ export const AppProvider = ({ children }) => {
     showToast('İstifadəçi məlumatları yeniləndi', '✏️');
   };
 
-  const deleteUser = (userId) => {
+  const deleteUser = async (userId) => {
     const target = usersList.find((u) => u.id === userId);
     if (!target || target.email === sessionEmail?.toLowerCase()) return;
 
+    // Real backend delete — this used to be localStorage-only, so a deleted "user" would
+    // still exist (and could still log in) on the actual server.
+    await adminDeleteUserBackend(target.email);
     deleteRegisteredUserById(userId);
     refreshUsersList(sessionEmail);
     showToast('İstifadəçi silindi', '🗑️');
@@ -903,6 +1244,15 @@ export const AppProvider = ({ children }) => {
     activeAvatarUrl,
     setActiveAvatarUrl,
     updateUsername,
+    isBanned,
+    timeoutUntil,
+    dynamicShopItems,
+    adminAddShopItem,
+    adminDeleteShopItem,
+    adminBanUser,
+    adminUnbanUser,
+    adminTimeoutUser,
+    adminRemoveTimeout,
     customProfileImage,
     setCustomProfileImage: setCustomProfilePhoto,
     clearCustomProfilePhoto,
@@ -949,7 +1299,19 @@ export const AppProvider = ({ children }) => {
     markAllChatsRead,
     claimTreasureChest,
     userRole,
-    setUserRole
+    setUserRole,
+    // Backend-authoritative coin wallet + map progress
+    coins,
+    hasUnlimitedCoins,
+    mapProgress,
+    loadMapProgress,
+    adminSetCoins,
+    adminSetUnlimitedCoins,
+    adminSetShopItemStock,
+    marketInventory,
+    equipMarketItem,
+    streakFreezes,
+    doubleXpPending,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

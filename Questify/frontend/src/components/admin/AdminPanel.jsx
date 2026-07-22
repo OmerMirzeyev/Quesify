@@ -1,7 +1,6 @@
 import React, { useState } from 'react';
 import { useApp } from '../../context/AppContext';
 import { isAdminRole } from '../../utils/storage';
-import AdminAuthGate from './AdminAuthGate';
 
 // Rich Pool of dynamic questions based on Language + Topic + Difficulty combination
 const GENERATED_AI_QUESTIONS = {
@@ -134,12 +133,15 @@ const GENERATED_AI_QUESTIONS = {
 };
 
 export default function AdminPanel() {
-  const { usersList, updateUserInfo, deleteUser, addQuest, quests, t, setCurrentTab } = useApp();
+  const { usersList, updateUserInfo, deleteUser, addQuest, quests, t,
+          adminBanUser, adminUnbanUser, adminTimeoutUser, adminRemoveTimeout } = useApp();
   const [activeAdminTab, setActiveAdminTab] = useState('users');
+  const [timeoutMinutes, setTimeoutMinutes] = useState(10);
+  const [timeoutingUserId, setTimeoutingUserId] = useState(null);
 
   // Edit User Modal State
   const [editingUser, setEditingUser] = useState(null); // holds user obj
-  const [editForm, setEditForm] = useState({ name: '', level: 0, gold: 0, xp: 0, role: 'İstifadəçi' });
+  const [editForm, setEditForm] = useState({ name: '', level: 0, gold: 0, xp: 0, role: 'İstifadəçi', applyCoinsOverride: false, coins: 0, hasUnlimitedCoins: false });
 
   // Delete User Modal State
   const [deletingUserId, setDeletingUserId] = useState(null);
@@ -277,6 +279,12 @@ export default function AdminPanel() {
       gold: user.gold,
       xp: user.xp,
       role: isAdminRole(user.role) ? 'Admin' : 'İstifadəçi',
+      // Coins/unlimited-coins live on the backend, not in this local directory, so there's no
+      // "current value" to prefill — applyCoinsOverride gates whether Save touches them at all,
+      // so leaving these untouched never silently resets a user's real coin balance to 0.
+      applyCoinsOverride: false,
+      coins: 0,
+      hasUnlimitedCoins: false,
     });
   };
 
@@ -287,6 +295,9 @@ export default function AdminPanel() {
       gold: Number(editForm.gold),
       xp: Number(editForm.xp),
       role: editForm.role,
+      ...(editForm.applyCoinsOverride
+        ? { coins: Number(editForm.coins), hasUnlimitedCoins: editForm.hasUnlimitedCoins }
+        : {}),
     });
     setEditingUser(null);
   };
@@ -297,7 +308,6 @@ export default function AdminPanel() {
   };
 
   return (
-    <AdminAuthGate onLogoutNavigate={() => setCurrentTab('dashboard')}>
     <div style={{ animation: 'fadeIn 0.4s ease' }}>
       <div className="section-header" style={{ marginBottom: '1.5rem' }}>
         <div>
@@ -333,7 +343,7 @@ export default function AdminPanel() {
                 Yalnız Register ekranından yaradılan hesablar burada görünür.
               </p>
             </div>
-          ) : (
+          ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
@@ -342,6 +352,7 @@ export default function AdminPanel() {
                   <th style={{ padding: '0.75rem' }}>{t('level')}</th>
                   <th style={{ padding: '0.75rem' }}>{t('gold')}</th>
                   <th style={{ padding: '0.75rem' }}>XP</th>
+                  <th style={{ padding: '0.75rem' }}>Status</th>
                   <th style={{ padding: '0.75rem', textAlign: 'right' }}>Əməliyyatlar</th>
                 </tr>
               </thead>
@@ -365,11 +376,41 @@ export default function AdminPanel() {
                     <td style={{ padding: '0.75rem' }}>Lv. {usr.level}</td>
                     <td style={{ padding: '0.75rem', color: 'var(--accent-gold-light)' }}>🪙 {usr.gold}</td>
                     <td style={{ padding: '0.75rem', color: 'var(--accent-cyan)' }}>{usr.xp}</td>
+                    <td style={{ padding: '0.75rem' }}>
+                      {usr.isBanned
+                        ? <span className="badge" style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--accent-red)', border: '1px solid rgba(239,68,68,0.3)' }}>🚫 Blok</span>
+                        : usr.timeoutUntil && new Date(usr.timeoutUntil) > new Date()
+                          ? <span className="badge" style={{ background: 'rgba(245,158,11,0.12)', color: 'var(--accent-gold-light)', border: '1px solid rgba(245,158,11,0.3)' }}>⏱️ Timeout</span>
+                          : <span className="badge" style={{ background: 'rgba(34,197,94,0.08)', color: 'var(--accent-green)', border: '1px solid rgba(34,197,94,0.2)' }}>✅ Aktiv</span>
+                      }
+                    </td>
                     <td style={{ padding: '0.75rem', textAlign: 'right' }}>
-                      <div style={{ display: 'flex', gap: '0.4rem', justifyContent: 'flex-end' }}>
+                      <div style={{ display: 'flex', gap: '0.3rem', justifyContent: 'flex-end', flexWrap: 'wrap' }}>
                         <button className="btn btn-outline btn-sm" onClick={() => openEditModal(usr)} style={{ padding: '0.25rem 0.6rem' }}>
                           {t('edit')}
                         </button>
+                        {!usr.isCurrentUser && !isAdminRole(usr.role) && (
+                          <>
+                            {usr.isBanned ? (
+                              <button className="btn btn-outline btn-sm" onClick={() => adminUnbanUser(usr.id, usr.email)} style={{ padding: '0.25rem 0.6rem', color: 'var(--accent-green)', borderColor: 'rgba(34,197,94,0.35)' }}>
+                                ✅ Bloku Aç
+                              </button>
+                            ) : (
+                              <button className="btn btn-outline btn-sm" onClick={() => adminBanUser(usr.id, usr.email)} style={{ padding: '0.25rem 0.6rem', color: 'var(--accent-red)', borderColor: 'rgba(239,68,68,0.3)' }}>
+                                🚫 Ban
+                              </button>
+                            )}
+                            {usr.timeoutUntil && new Date(usr.timeoutUntil) > new Date() ? (
+                              <button className="btn btn-outline btn-sm" onClick={() => adminRemoveTimeout(usr.id, usr.email)} style={{ padding: '0.25rem 0.6rem', color: 'var(--accent-cyan)', borderColor: 'rgba(6,182,212,0.3)' }}>
+                                ✕ Timeout
+                              </button>
+                            ) : (
+                              <button className="btn btn-outline btn-sm" onClick={() => { setTimeoutingUserId(usr.id); }} style={{ padding: '0.25rem 0.6rem', color: 'var(--accent-gold-light)', borderColor: 'rgba(245,158,11,0.3)' }}>
+                                ⏱️ Timeout
+                              </button>
+                            )}
+                          </>
+                        )}
                         {!usr.isCurrentUser && (
                           <button className="btn btn-outline btn-sm" onClick={() => setDeletingUserId(usr.id)} style={{ padding: '0.25rem 0.6rem', color: 'var(--accent-red)', borderColor: 'rgba(239, 68, 68, 0.3)' }}>
                             {t('delete')}
@@ -548,6 +589,41 @@ export default function AdminPanel() {
                   <option value="Admin">Admin</option>
                 </select>
               </div>
+
+              {/* Backend-authoritative coin wallet override (Market Coins, separate from the legacy local Gold above) */}
+              <div style={{ border: '1px dashed var(--border-color)', borderRadius: 'var(--radius-sm)', padding: '0.75rem' }}>
+                <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem', fontWeight: 700, cursor: 'pointer' }}>
+                  <input
+                    type="checkbox"
+                    checked={editForm.applyCoinsOverride}
+                    onChange={e => setEditForm({ ...editForm, applyCoinsOverride: e.target.checked })}
+                  />
+                  🪙 Coin balansını / limitsiz coini dəyiş (backend)
+                </label>
+                {editForm.applyCoinsOverride && (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '0.75rem' }}>
+                    <div className="input-group" style={{ margin: 0 }}>
+                      <label className="input-label">Yeni Coin balansı</label>
+                      <input
+                        type="number"
+                        min={0}
+                        className="input-field"
+                        value={editForm.coins}
+                        onChange={e => setEditForm({ ...editForm, coins: e.target.value })}
+                        disabled={editForm.hasUnlimitedCoins}
+                      />
+                    </div>
+                    <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.82rem', cursor: 'pointer' }}>
+                      <input
+                        type="checkbox"
+                        checked={editForm.hasUnlimitedCoins}
+                        onChange={e => setEditForm({ ...editForm, hasUnlimitedCoins: e.target.checked })}
+                      />
+                      ♾️ Limitsiz coin (mağazada həmişə ala bilər)
+                    </label>
+                  </div>
+                )}
+              </div>
             </div>
             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
               <button className="btn btn-outline" onClick={() => setEditingUser(null)}>{t('cancel')}</button>
@@ -562,11 +638,46 @@ export default function AdminPanel() {
         <div className="modal-overlay" onClick={() => setDeletingUserId(null)}>
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '350px', textAlign: 'center' }}>
             <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>⚠️</div>
-            <h3 style={{ marginBottom: '1rem', color: 'var(--accent-red)' }}>Silmə Təsdiqi</h3>
+            <h3 style={{ marginBottom: '1rem', color: 'var(--accent-red)' }}>Silmə Təsdiq</h3>
             <p style={{ marginBottom: '1.5rem', color: 'var(--text-secondary)' }}>{t('deleteUserConfirm')}</p>
             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
               <button className="btn btn-outline" onClick={() => setDeletingUserId(null)}>{t('cancel')}</button>
               <button className="btn btn-primary" style={{ background: 'var(--accent-red)', borderColor: 'var(--accent-red)' }} onClick={confirmDelete}>{t('confirm')}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Timeout Duration Modal */}
+      {timeoutingUserId && (
+        <div className="modal-overlay" onClick={() => setTimeoutingUserId(null)}>
+          <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '350px', textAlign: 'center' }}>
+            <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>⏱️</div>
+            <h3 style={{ marginBottom: '1rem', color: 'var(--accent-gold-light)' }}>Timeout Müddəti</h3>
+            <p style={{ marginBottom: '1rem', fontSize: '0.88rem', color: 'var(--text-secondary)' }}>İstifadəçi nə qədər məhdudlaşdırılsın?</p>
+            <div className="input-group" style={{ textAlign: 'left', marginBottom: '1.5rem' }}>
+              <label className="input-label">Dəqiqə (məs: 10, 60, 1440)</label>
+              <input
+                type="number"
+                min={1}
+                className="input-field"
+                value={timeoutMinutes}
+                onChange={e => setTimeoutMinutes(Number(e.target.value))}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+              <button className="btn btn-outline" onClick={() => setTimeoutingUserId(null)}>Ləğv et</button>
+              <button
+                className="btn btn-primary"
+                style={{ background: 'var(--accent-gold-light)', borderColor: 'var(--accent-gold-light)', color: '#000' }}
+                onClick={() => {
+                  const usr = usersList.find(u => u.id === timeoutingUserId);
+                  if (usr) adminTimeoutUser(usr.id, usr.email, timeoutMinutes);
+                  setTimeoutingUserId(null);
+                }}
+              >
+                Tətbiqi Et
+              </button>
             </div>
           </div>
         </div>
@@ -620,6 +731,5 @@ export default function AdminPanel() {
         </div>
       )}
     </div>
-    </AdminAuthGate>
   );
 }

@@ -1,22 +1,163 @@
 @backend_HostAddress = http://localhost:5271
 
-GET {{backend_HostAddress}}/weatherforecast/
-Accept: application/json
+### Register
+POST {{backend_HostAddress}}/api/auth/register
+Content-Type: application/json
 
-###
+{
+  "firstName": "Test",
+  "lastName": "User",
+  "email": "testuser@example.com",
+  "password": "password123"
+}
 
+### Login as the seeded admin (real seed credentials — see Program.cs)
+# @name adminLogin
 POST {{backend_HostAddress}}/api/auth/login
 Content-Type: application/json
 
 {
-  "email": "admin@gmail.com",
-  "password": "admin123"
+  "email": "admin@questify.com",
+  "password": "AdminPassword123!"
 }
 
-###
+### Login as a regular user
+# @name userLogin
+POST {{backend_HostAddress}}/api/auth/login
+Content-Type: application/json
 
+{
+  "email": "testuser@example.com",
+  "password": "password123"
+}
+
+### Admin dashboard (requires Admin role)
 GET {{backend_HostAddress}}/api/admin/dashboard
-Authorization: Bearer {{token}}
+Authorization: Bearer {{adminLogin.response.body.token}}
 Accept: application/json
 
-###
+### List users (paginated)
+GET {{backend_HostAddress}}/api/admin/users?page=1&pageSize=25
+Authorization: Bearer {{adminLogin.response.body.token}}
+Accept: application/json
+
+### Ban a user
+POST {{backend_HostAddress}}/api/admin/ban/by-email?email=testuser@example.com
+Authorization: Bearer {{adminLogin.response.body.token}}
+
+### Unban a user
+POST {{backend_HostAddress}}/api/admin/unban/by-email?email=testuser@example.com
+Authorization: Bearer {{adminLogin.response.body.token}}
+
+### Timeout a user for 10 minutes
+POST {{backend_HostAddress}}/api/admin/timeout/by-email?email=testuser@example.com&minutes=10
+Authorization: Bearer {{adminLogin.response.body.token}}
+
+### Remove timeout
+POST {{backend_HostAddress}}/api/admin/remove-timeout/by-email?email=testuser@example.com
+Authorization: Bearer {{adminLogin.response.body.token}}
+
+### Set a user's coin balance (absolute set)
+POST {{backend_HostAddress}}/api/admin/coins/by-email?email=testuser@example.com&amount=500
+Authorization: Bearer {{adminLogin.response.body.token}}
+
+### Toggle unlimited coins override
+POST {{backend_HostAddress}}/api/admin/coins/unlimited/by-email?email=testuser@example.com&enabled=true
+Authorization: Bearer {{adminLogin.response.body.token}}
+
+### Change a user's role
+POST {{backend_HostAddress}}/api/admin/role/by-email?email=testuser@example.com&role=Admin
+Authorization: Bearer {{adminLogin.response.body.token}}
+
+### Delete a user
+DELETE {{backend_HostAddress}}/api/admin/users/by-email?email=testuser@example.com
+Authorization: Bearer {{adminLogin.response.body.token}}
+
+### Moderation history for a user
+GET {{backend_HostAddress}}/api/admin/moderation-history?email=testuser@example.com
+Authorization: Bearer {{adminLogin.response.body.token}}
+
+### Public shop catalog
+GET {{backend_HostAddress}}/api/shop
+Accept: application/json
+
+### Add a shop item (Admin only)
+POST {{backend_HostAddress}}/api/shop
+Authorization: Bearer {{adminLogin.response.body.token}}
+Content-Type: application/json
+
+{
+  "name": "Golden Cat",
+  "price": 100,
+  "emoji": "🐱",
+  "type": "Avatar",
+  "itemType": "avatar",
+  "rarity": "Rare"
+}
+
+### Delete a shop item
+DELETE {{backend_HostAddress}}/api/shop/1
+Authorization: Bearer {{adminLogin.response.body.token}}
+
+### Purchase a shop item (spends Coins unless HasUnlimitedCoins)
+POST {{backend_HostAddress}}/api/market/purchase
+Authorization: Bearer {{userLogin.response.body.token}}
+Content-Type: application/json
+
+{
+  "shopItemId": 1
+}
+
+### Get inventory + coin balance
+GET {{backend_HostAddress}}/api/market/inventory
+Authorization: Bearer {{userLogin.response.body.token}}
+
+### Equip an owned item
+POST {{backend_HostAddress}}/api/market/equip
+Authorization: Bearer {{userLogin.response.body.token}}
+Content-Type: application/json
+
+{
+  "shopItemId": 1
+}
+
+### Map progress for a track
+GET {{backend_HostAddress}}/api/map/progress?track=C%23
+Authorization: Bearer {{userLogin.response.body.token}}
+
+### Complete a level (unlocks the next one)
+POST {{backend_HostAddress}}/api/map/complete
+Authorization: Bearer {{userLogin.response.body.token}}
+Content-Type: application/json
+
+{
+  "track": "C#",
+  "chapterIndex": 0,
+  "levelIndex": 0,
+  "isLastLevelOfChapter": false
+}
+
+### Public leaderboard (no Email field)
+GET {{backend_HostAddress}}/api/leaderboard
+Accept: application/json
+
+### Update own profile (avatar/emoji) — requires auth, no Email in body
+POST {{backend_HostAddress}}/api/auth/update-profile
+Authorization: Bearer {{userLogin.response.body.token}}
+Content-Type: application/json
+
+{
+  "emoji": "🎮"
+}
+
+### Own ban/timeout status — requires auth, self or Admin only
+GET {{backend_HostAddress}}/api/auth/status?email=testuser@example.com
+Authorization: Bearer {{userLogin.response.body.token}}
+
+### Forgot password (no longer returns the temp password/code in the response)
+POST {{backend_HostAddress}}/api/auth/forgot-password
+Content-Type: application/json
+
+{
+  "email": "testuser@example.com"
+}

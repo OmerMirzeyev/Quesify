@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
 import { getWeeklyResetRemainingMs, formatWeeklyCountdown } from '../../utils/storage';
+import { apiFetch } from '../../utils/api';
 
 const trophies = {
   1: { emoji: '🥇', class: 'rank-1' },
@@ -83,7 +84,28 @@ export default function Leaderboard() {
 
   const rawList = getLeaderboard(activeTrack);
 
+  // Pull every player's *current* DB-persisted avatar (not just what happened to be cached in
+  // this browser) so custom photos/avatars uploaded elsewhere show up here too.
+  const [dbAvatars, setDbAvatars] = useState({});
+  useEffect(() => {
+    const emails = rawList.map((u) => u.email).filter(Boolean);
+    if (emails.length === 0) return;
+    let cancelled = false;
+    apiFetch('/api/users/avatars', { method: 'POST', auth: true, body: { emails } })
+      .then(({ ok, data }) => {
+        if (!cancelled && ok && Array.isArray(data)) {
+          const map = {};
+          data.forEach((u) => { map[u.email] = u; });
+          setDbAvatars(map);
+        }
+      })
+      .catch(() => { /* offline — fall back to locally-cached emoji below */ });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTrack, rawList.length]);
+
   const preparedList = rawList.map((u) => {
+    const dbAvatar = dbAvatars[u.email];
     if (u.isCurrentUser) {
       if (activeTrack === 'Global') {
         return { ...u, name: user.username, level: user.level, emoji: user.emoji, customProfileImage };
@@ -91,7 +113,11 @@ export default function Leaderboard() {
       const myTrack = trackStats[activeTrack] || { xp: 0, gold: 0 };
       return { ...u, name: user.username, level: user.level, gold: myTrack.gold, xp: myTrack.xp, emoji: user.emoji, customProfileImage };
     }
-    return u;
+    return {
+      ...u,
+      emoji: dbAvatar?.emoji || u.emoji,
+      customProfileImage: dbAvatar?.avatarUrl || null,
+    };
   });
 
   const sorted = [...preparedList].sort((a, b) => b.xp - a.xp || b.gold - a.gold);

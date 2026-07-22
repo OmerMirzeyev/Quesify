@@ -905,21 +905,23 @@ img {
    AUTH PAGE
    ============================================================ */
 .auth-container {
-  min-height: 100vh;
+  height: 100vh;
   display: flex;
   overflow: hidden;
 }
 
 .auth-left {
   flex: 1;
+  height: 100%;
   background: var(--gradient-card);
   border-right: 1px solid var(--border-color);
   padding: 3.5rem;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-start;
   position: relative;
-  overflow: hidden;
+  overflow-x: hidden;
+  overflow-y: auto;
 }
 
 .auth-left::before {
@@ -1044,6 +1046,277 @@ img {
 .auth-feature-desc {
   color: var(--text-secondary);
   font-size: 0.8rem;
+}
+
+/* ── 2.5D glassmorphism feature cards (Framer Motion tilt wrapper) ── */
+.auth-feature-card-glass {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1.1rem 1.35rem;
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 32px -12px rgba(0, 0, 0, 0.35);
+  will-change: transform;
+  cursor: default;
+}
+
+:root[data-theme='light'] .auth-feature-card-glass {
+  background: rgba(255, 255, 255, 0.55);
+  border-color: rgba(15, 23, 42, 0.08);
+}
+
+.auth-particle-field {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.auth-floating-badge {
+  pointer-events: none;
+  z-index: 1;
+  font-size: 0.72rem;
+  font-weight: 800;
+  padding: 0.35rem 0.7rem;
+  border-radius: 100px;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  background: rgba(255, 255, 255, 0.08);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  box-shadow: 0 6px 20px -8px rgba(0, 0, 0, 0.4);
+}
+
+@keyframes authGlowDrift {
+  0%, 100% { transform: translate(0, 0) scale(1); }
+  33% { transform: translate(24px, -18px) scale(1.08); }
+  66% { transform: translate(-18px, 14px) scale(0.95); }
+}
+
+.auth-glow-animated {
+  animation: authGlowDrift 14s ease-in-out infinite;
+}
+
+/* ── Security / human-verification checkbox ── */
+.security-checkbox-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  padding: 0.75rem 1rem;
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  margin-bottom: 0.25rem;
+}
+
+.security-checkbox-box {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  border: 2px solid var(--border-hover);
+  background: var(--bg-card);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: var(--transition);
+  padding: 0;
+}
+
+.security-checkbox-box:hover {
+  border-color: var(--accent-purple);
+}
+
+.security-checkbox-box.checked {
+  background: var(--gradient-primary);
+  border-color: transparent;
+  box-shadow: var(--glow-purple);
+}
+
+.security-checkbox-box.has-error {
+  border-color: var(--accent-red);
+}
+
+.security-checkbox-check {
+  color: #fff;
+  display: flex;
+}
+
+.security-checkbox-label {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.82rem;
+  color: var(--text-secondary);
+  cursor: pointer;
+  user-select: none;
+}
+
+.security-checkbox-icon {
+  color: var(--accent-cyan);
+  flex-shrink: 0;
+}
+
+/* ── 3D Tech Globe ── */
+.tech-globe-section {
+  display: flex;
+  justify-content: center;
+  margin: 1.5rem 0 1.75rem;
+}
+
+.tech-globe-wrap {
+  position: relative;
+  perspective: 900px;
+}
+
+.tech-globe-core {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, rgba(139, 92, 246, 0.55), rgba(34, 211, 238, 0.22) 45%, rgba(15, 15, 35, 0.02) 75%);
+  box-shadow: 0 0 70px rgba(139, 92, 246, 0.4), inset 0 0 40px rgba(34, 211, 238, 0.25);
+  animation: globePulse 4s ease-in-out infinite;
+}
+
+.tech-globe-grid {
+  position: absolute;
+  inset: 8%;
+  border-radius: 50%;
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background:
+    repeating-linear-gradient(0deg, transparent 0 11%, rgba(255, 255, 255, 0.07) 11% 12%),
+    repeating-linear-gradient(90deg, transparent 0 11%, rgba(255, 255, 255, 0.07) 11% 12%);
+  -webkit-mask-image: radial-gradient(circle, black 60%, transparent 72%);
+  mask-image: radial-gradient(circle, black 60%, transparent 72%);
+}
+
+.tech-globe-orbit {
+  position: absolute;
+  inset: 0;
+  transform-style: preserve-3d;
+  animation: globeSpin 18s linear infinite;
+}
+
+.tech-globe-node {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform-style: preserve-3d;
+}
+
+.tech-globe-chip {
+  display: inline-block;
+  padding: 0.3rem 0.7rem;
+  border-radius: 100px;
+  border: 1px solid;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.3px;
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  white-space: nowrap;
+}
+
+@keyframes globeSpin {
+  from { transform: rotateX(18deg) rotateY(0deg); }
+  to { transform: rotateX(18deg) rotateY(360deg); }
+}
+
+@keyframes globePulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.045); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tech-globe-orbit { animation: none; }
+  .tech-globe-core { animation: none; }
+}
+
+/* ── Live learning stats panel ── */
+.auth-stats-panel {
+  margin-bottom: 1.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.auth-stats-course-row {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.auth-stats-course-chip {
+  flex: 1 1 140px;
+  padding: 0.65rem 0.8rem;
+  background: rgba(255, 255, 255, 0.04);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+
+.auth-stats-course-value {
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 900;
+}
+
+.auth-stats-course-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--text-primary);
+}
+
+.auth-stats-course-sub {
+  font-size: 0.65rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+}
+
+.auth-stats-aggregate-row {
+  display: flex;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.auth-stats-aggregate-chip {
+  flex: 1 1 180px;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  padding: 0.6rem 0.85rem;
+  background: rgba(139, 92, 246, 0.06);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  border-radius: var(--radius-sm);
+}
+
+.auth-stats-aggregate-icon {
+  color: var(--accent-purple-light);
+  flex-shrink: 0;
+}
+
+.auth-stats-aggregate-value {
+  font-family: var(--font-display);
+  font-size: 0.95rem;
+  font-weight: 900;
+}
+
+.auth-stats-aggregate-label {
+  font-size: 0.68rem;
+  color: var(--text-muted);
+  font-weight: 600;
 }
 
 /* Form Card */
@@ -2488,8 +2761,8 @@ img {
 }
 
 .auth-avatar-option.selected {
-  border-color: var(--av-color, #8b5cf6);
-  box-shadow: 0 0 18px color-mix(in srgb, var(--av-color, #8b5cf6) 50%, transparent);
+  border-color: var(--av-color, #8b5cf6) !important;
+  box-shadow: 0 0 0 2px var(--bg-card), 0 0 0 4px var(--av-color, #8b5cf6), 0 8px 24px rgba(0, 0, 0, 0.4) !important;
   transform: translateY(-3px) scale(1.04);
 }
 
@@ -3469,6 +3742,24 @@ img {
 
 .pw-toggle-btn:hover {
   color: var(--accent-purple-light);
+}
+
+/* Hide native browser password reveal icon (Edge, Chrome, IE) */
+input::-ms-reveal,
+input::-ms-clear,
+input::-webkit-textfield-decoration-container,
+input::-webkit-contacts-auto-fill-button,
+input::-webkit-credentials-auto-fill-button,
+.input-field::-ms-reveal,
+.input-field::-ms-clear,
+.input-field::-webkit-textfield-decoration-container,
+.input-field::-webkit-credentials-auto-fill-button {
+  display: none !important;
+  visibility: hidden !important;
+  width: 0 !important;
+  height: 0 !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
 }
 
 /* ============================================================

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useApp } from '../../context/AppContext';
 import { getRegisteredUsers, getUserProgress } from '../../utils/storage';
+import { apiFetch } from '../../utils/api';
 
 export default function FriendsPage() {
   const {
@@ -37,14 +38,34 @@ export default function FriendsPage() {
 
   // Retrieve friends full details dynamically
   const registeredUsers = getRegisteredUsers();
-  
+
+  // Pull each friend's *current* DB-persisted avatar so a friend's profile picture/avatar
+  // change is visible here too, not just in whichever browser they set it from.
+  const [dbAvatars, setDbAvatars] = useState({});
+  useEffect(() => {
+    if (friends.length === 0) return;
+    let cancelled = false;
+    apiFetch('/api/users/avatars', { method: 'POST', auth: true, body: { emails: friends } })
+      .then(({ ok, data }) => {
+        if (!cancelled && ok && Array.isArray(data)) {
+          const map = {};
+          data.forEach((u) => { map[u.email] = u; });
+          setDbAvatars(map);
+        }
+      })
+      .catch(() => { /* offline — fall back to locally-cached emoji below */ });
+    return () => { cancelled = true; };
+  }, [friends]);
+
   const friendsList = friends.map(email => {
     const userReg = registeredUsers.find(u => u.email === email.toLowerCase());
     const userProg = getUserProgress(email);
+    const dbAvatar = dbAvatars[email.toLowerCase()];
     return {
       email,
       name: userReg?.username || userProg?.user?.username || email,
-      emoji: userProg?.user?.emoji || '🎮',
+      emoji: dbAvatar?.emoji || userProg?.user?.emoji || '🎮',
+      avatarUrl: dbAvatar?.avatarUrl || null,
       level: userProg?.user?.level || 1,
       xp: userProg?.user?.xp || 0,
       role: userReg?.role || 'İstifadəçi',
@@ -266,9 +287,12 @@ export default function FriendsPage() {
                     <div style={{
                       width: '38px', height: '38px', borderRadius: '50%',
                       background: 'rgba(255,255,255,0.05)', display: 'flex',
-                      alignItems: 'center', justifyContent: 'center', fontSize: '1.8rem'
+                      alignItems: 'center', justifyContent: 'center', fontSize: '1.8rem',
+                      overflow: 'hidden'
                     }}>
-                      {fr.emoji}
+                      {fr.avatarUrl
+                        ? <img src={fr.avatarUrl} alt={fr.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                        : fr.emoji}
                     </div>
                     <div>
                       <div style={{ fontSize: '0.9rem', fontWeight: 800 }}>{fr.name}</div>
@@ -309,7 +333,11 @@ export default function FriendsPage() {
             
             {/* Drawer Header */}
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', borderBottom: '1px solid var(--border-color)', paddingBottom: '0.85rem', marginBottom: '0.85rem' }}>
-              <div style={{ fontSize: '2.2rem' }}>{activeFriendData.emoji}</div>
+              <div style={{ fontSize: '2.2rem', width: '2.2rem', height: '2.2rem', borderRadius: '50%', overflow: 'hidden', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                {activeFriendData.avatarUrl
+                  ? <img src={activeFriendData.avatarUrl} alt={activeFriendData.name} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                  : activeFriendData.emoji}
+              </div>
               <div style={{ flex: 1 }}>
                 <h4 style={{ margin: 0, fontSize: '0.98rem', fontWeight: 800 }}>{activeFriendData.name}</h4>
                 <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--text-muted)' }}>
