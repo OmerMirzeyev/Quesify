@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Crown, Trophy, Medal } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { getWeeklyResetRemainingMs, formatWeeklyCountdown } from '../../utils/storage';
 import { apiFetch } from '../../utils/api';
@@ -7,6 +8,14 @@ const trophies = {
   1: { emoji: '🥇', class: 'rank-1' },
   2: { emoji: '🥈', class: 'rank-2' },
   3: { emoji: '🥉', class: 'rank-3' },
+};
+
+// Top-3 podium reward tiers — icon, glow/border color, and the translated reward copy shown
+// on the podium card and in the full-table reward badge.
+const PODIUM_REWARDS = {
+  1: { Icon: Crown, color: '#fbbf24', glow: 'rgba(251,191,36,0.55)', rewardKey: 'podiumGoldReward' },
+  2: { Icon: Trophy, color: '#cbd5e1', glow: 'rgba(203,213,225,0.5)', rewardKey: 'podiumSilverReward' },
+  3: { Icon: Medal, color: '#d97706', glow: 'rgba(217,119,6,0.45)', rewardKey: 'podiumBronzeReward' },
 };
 
 const TRACK_TABS = [
@@ -108,7 +117,8 @@ export default function Leaderboard() {
     const dbAvatar = dbAvatars[u.email];
     if (u.isCurrentUser) {
       if (activeTrack === 'Global') {
-        return { ...u, name: user.username, level: user.level, emoji: user.emoji, customProfileImage };
+        // xp/streak come from the live backend row (u) — only cosmetic fields are refreshed locally.
+        return { ...u, name: user.username, emoji: user.emoji, customProfileImage };
       }
       const myTrack = trackStats[activeTrack] || { xp: 0, gold: 0 };
       return { ...u, name: user.username, level: user.level, gold: myTrack.gold, xp: myTrack.xp, emoji: user.emoji, customProfileImage };
@@ -116,11 +126,11 @@ export default function Leaderboard() {
     return {
       ...u,
       emoji: dbAvatar?.emoji || u.emoji,
-      customProfileImage: dbAvatar?.avatarUrl || null,
+      customProfileImage: dbAvatar?.avatarUrl || u.customProfileImage || null,
     };
   });
 
-  const sorted = [...preparedList].sort((a, b) => b.xp - a.xp || b.gold - a.gold);
+  const sorted = [...preparedList].sort((a, b) => b.xp - a.xp || (b.gold || 0) - (a.gold || 0));
 
   return (
     <div style={{ animation: 'fadeIn 0.4s ease' }}>
@@ -189,10 +199,10 @@ export default function Leaderboard() {
           <span style={{ fontSize: '1.4rem' }}>⏳</span>
           <div>
             <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', fontWeight: 700, textTransform: 'uppercase' }}>
-              Həftəlik Sıfırlama
+              {t('lbWeeklyReset')}
             </div>
             <div style={{ fontSize: '0.88rem', fontWeight: 700, color: trackConfig.primaryColor }}>
-              Həftəlik mükafat üçün qalan vaxt:{' '}
+              {t('lbWeeklyRemaining')}{' '}
               <span style={{ fontFamily: 'monospace' }}>{formatWeeklyCountdown(weeklyRemaining)}</span>
             </div>
           </div>
@@ -214,10 +224,10 @@ export default function Leaderboard() {
           <span style={{ fontSize: '1.6rem' }}>🏆</span>
           <div>
             <div style={{ fontSize: '0.72rem', color: 'var(--accent-gold-light)', fontWeight: 800, textTransform: 'uppercase' }}>
-              1-ci Yer Mükafatı
+              {t('lbFirstPlacePrize')}
             </div>
             <div style={{ fontSize: '0.95rem', fontWeight: 800, color: 'var(--accent-gold-light)' }}>
-              +500 🪙 Gold
+              {t('podiumGoldReward')}
             </div>
           </div>
         </div>
@@ -251,9 +261,9 @@ export default function Leaderboard() {
           }}
         >
           <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>🏁</div>
-          <p style={{ margin: 0, fontWeight: 600 }}>{activeTrack} liderlər cədvəlində hələ oyunçu yoxdur.</p>
+          <p style={{ margin: 0, fontWeight: 600 }}>{activeTrack} {t('lbEmptyTitle')}</p>
           <p style={{ margin: '0.35rem 0 0', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-            Qeydiyyatdan keçin və bu dil yolunda XP qazanmağa başlayın!
+            {t('lbEmptySubtitle')}
           </p>
         </div>
       ) : (
@@ -271,37 +281,47 @@ export default function Leaderboard() {
             >
               {sorted.slice(0, 3).map((userItem, idx) => {
                 const rank = idx + 1;
-                const trophy = trophies[rank];
+                const reward = PODIUM_REWARDS[rank];
+                const RewardIcon = reward.Icon;
                 const heights = [140, 110, 90];
                 const delays = ['0.1s', '0.05s', '0.15s'];
 
                 return (
                   <div
                     key={userItem.id}
+                    className="podium-card"
+                    title={t(reward.rewardKey)}
                     style={{
                       display: 'flex',
                       flexDirection: 'column',
                       alignItems: 'center',
                       gap: '0.5rem',
+                      padding: '1rem 0.85rem 0.75rem',
+                      borderRadius: 'var(--radius)',
+                      border: `1.5px solid ${reward.color}`,
+                      boxShadow: `0 0 26px ${reward.glow}, 0 0 8px ${reward.glow} inset`,
+                      background: `linear-gradient(180deg, ${reward.color}14 0%, transparent 65%)`,
                       animation: `fadeIn 0.5s ease ${delays[idx]} both`,
                       order: idx === 0 ? 0 : idx === 1 ? -1 : 1,
                     }}
                   >
-                    {rank === 1 && (
-                      <span
-                        style={{
-                          fontSize: '0.65rem',
-                          fontWeight: 800,
-                          padding: '0.2rem 0.55rem',
-                          borderRadius: '100px',
-                          background: 'rgba(245,158,11,0.2)',
-                          border: '1px solid rgba(245,158,11,0.5)',
-                          color: 'var(--accent-gold-light)',
-                        }}
-                      >
-                        +500 🪙
-                      </span>
-                    )}
+                    <RewardIcon size={22} color={reward.color} style={{ filter: `drop-shadow(0 0 6px ${reward.glow})` }} />
+                    <span
+                      className="podium-reward-tag"
+                      style={{
+                        fontSize: '0.62rem',
+                        fontWeight: 800,
+                        padding: '0.2rem 0.55rem',
+                        borderRadius: '100px',
+                        background: `${reward.color}22`,
+                        border: `1px solid ${reward.color}88`,
+                        color: reward.color,
+                        textAlign: 'center',
+                        maxWidth: '110px',
+                      }}
+                    >
+                      {t(reward.rewardKey)}
+                    </span>
                     <div
                       style={{
                         width: '42px',
@@ -312,8 +332,8 @@ export default function Leaderboard() {
                         fontSize: '2.5rem',
                         borderRadius: '50%',
                         overflow: 'hidden',
-                        border: rank === 1 ? `2px solid ${trackConfig.primaryColor}` : 'none',
-                        boxShadow: rank === 1 ? `0 0 12px ${trackConfig.glowColor}` : 'none',
+                        border: `2px solid ${reward.color}`,
+                        boxShadow: `0 0 12px ${reward.glow}`,
                       }}
                     >
                       {userItem.customProfileImage ? (
@@ -322,7 +342,9 @@ export default function Leaderboard() {
                     </div>
                     <div style={{ fontWeight: 800, fontSize: '0.95rem' }}>{userItem.name}</div>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
-                      {t('level')} {userItem.level} · {trackConfig.label}
+                      {activeTrack === 'Global'
+                        ? t('lbStreakDays', { count: userItem.streak || 0 })
+                        : `${t('level')} ${userItem.level} · ${trackConfig.label}`}
                     </div>
                     <div
                       style={{
@@ -335,10 +357,10 @@ export default function Leaderboard() {
                         justifyContent: 'center',
                         paddingTop: '0.6rem',
                         fontSize: '1.8rem',
-                        boxShadow: rank === 1 ? `0 0 20px ${trackConfig.glowColor}` : 'none',
+                        boxShadow: `0 0 20px ${reward.glow}`,
                       }}
                     >
-                      {trophy.emoji}
+                      {trophies[rank].emoji}
                     </div>
                   </div>
                 );
@@ -386,24 +408,29 @@ export default function Leaderboard() {
                     <div className="lb-user-name">
                       {userItem.name}
                       {userItem.isCurrentUser && <span className="you-badge">{t('youBadge')}</span>}
-                      {rank === 1 && (
+                      {PODIUM_REWARDS[rank] && (
                         <span
+                          title={t(PODIUM_REWARDS[rank].rewardKey)}
                           style={{
                             marginLeft: '0.35rem',
                             fontSize: '0.62rem',
                             padding: '0.1rem 0.4rem',
                             borderRadius: '100px',
-                            background: 'rgba(245,158,11,0.15)',
-                            color: 'var(--accent-gold-light)',
+                            background: `${PODIUM_REWARDS[rank].color}22`,
+                            border: `1px solid ${PODIUM_REWARDS[rank].color}88`,
+                            color: PODIUM_REWARDS[rank].color,
                             fontWeight: 800,
+                            cursor: 'help',
                           }}
                         >
-                          +500🪙
+                          {t('podiumRewardLabel')} 🎁
                         </span>
                       )}
                     </div>
                     <div className="lb-user-level">
-                      ⚔️ {t('level')} {userItem.level} · {trackConfig.icon} {trackConfig.label}
+                      {activeTrack === 'Global'
+                        ? t('lbStreakDays', { count: userItem.streak || 0 })
+                        : `⚔️ ${t('level')} ${userItem.level} · ${trackConfig.icon} ${trackConfig.label}`}
                     </div>
                   </div>
                   <div className="lb-stats">
@@ -412,8 +439,17 @@ export default function Leaderboard() {
                       <span className="lb-stat-label">{trackConfig.statLabel}</span>
                     </div>
                     <div className="lb-stat">
-                      <span className="lb-stat-value gold">🪙 {userItem.gold.toLocaleString()}</span>
-                      <span className="lb-stat-label">{t('gold')}</span>
+                      {activeTrack === 'Global' ? (
+                        <>
+                          <span className="lb-stat-value gold">🔥 {(userItem.streak || 0).toLocaleString()}</span>
+                          <span className="lb-stat-label">{t('lbStreakStat')}</span>
+                        </>
+                      ) : (
+                        <>
+                          <span className="lb-stat-value gold">🪙 {userItem.gold.toLocaleString()}</span>
+                          <span className="lb-stat-label">{t('gold')}</span>
+                        </>
+                      )}
                     </div>
                   </div>
                 </div>

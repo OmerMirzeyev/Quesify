@@ -16,7 +16,8 @@ public class MarketController : ControllerBase
     // Repeatable purchases — everything else (avatars/badges/frames/themes) can only be owned once.
     private static readonly HashSet<string> ConsumableItemTypes = new(StringComparer.OrdinalIgnoreCase)
     {
-        "potion_heart", "joker_5050", "streak_freeze", "double_xp"
+        "potion_heart", "joker_5050", "streak_freeze", "double_xp",
+        "time_freeze", "hint_card", "answer_change"
     };
 
     // Cosmetic categories where owning several is fine, but only one of each category can be

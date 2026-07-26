@@ -13,6 +13,11 @@ namespace backend.Controllers;
 [Authorize]
 public class MapController : ControllerBase
 {
+    // Flat server-side XP award per newly-completed level — the frontend's own xpReward values
+    // vary per quest and stay purely local; this is a separate, simpler backend-authoritative
+    // total used for the leaderboard and XP-based badges.
+    private const int LevelCompletionXp = 20;
+
     private readonly AppDbContext _context;
 
     public MapController(AppDbContext context)
@@ -65,6 +70,8 @@ public class MapController : ControllerBase
             p.UserId == user.Id && p.Track == model.Track &&
             p.ChapterIndex == model.ChapterIndex && p.LevelIndex == model.LevelIndex);
 
+        var wasAlreadyCompleted = current?.IsCompleted ?? false;
+
         if (current is null)
         {
             current = new UserMapProgress
@@ -80,6 +87,21 @@ public class MapController : ControllerBase
         current.IsUnlocked = true;
         current.IsCompleted = true;
         current.CompletedAt = DateTime.UtcNow;
+
+        // Award XP (and check level-completion badges) only the first time this specific level
+        // is completed — CompleteLevel is otherwise idempotent and gets called again on retries.
+        if (!wasAlreadyCompleted)
+        {
+            user.Xp += LevelCompletionXp;
+
+            var otherCompletedCount = await _context.UserMapProgress
+                .CountAsync(p => p.UserId == user.Id && p.IsCompleted && p.Id != current.Id);
+            if (otherCompletedCount == 0)
+                await BadgeAwarder.AwardAsync(_context, user, "first_lesson");
+
+            if (user.Xp >= 100)
+                await BadgeAwarder.AwardAsync(_context, user, "xp_100");
+        }
 
         var nextChapterIndex = model.IsLastLevelOfChapter ? model.ChapterIndex + 1 : model.ChapterIndex;
         var nextLevelIndex = model.IsLastLevelOfChapter ? 0 : model.LevelIndex + 1;

@@ -57,6 +57,37 @@ public class ShopController : ControllerBase
         return CreatedAtAction(nameof(GetAll), new { id = item.Id }, item);
     }
 
+    // PUT /api/shop/{id} — Admin only, partial update (only supplied fields change). Used by the
+    // admin panel's shop management section to edit price/description without re-sending the
+    // whole item.
+    [HttpPut("{id:int}")]
+    [Authorize(Roles = "Admin")]
+    public async Task<IActionResult> UpdateItem(int id, [FromBody] UpdateShopItemDto dto)
+    {
+        var item = await _context.ShopItems.FindAsync(id);
+        if (item is null) return NotFound(new { message = "Item tapılmadı." });
+
+        if (dto.Name is not null) item.Name = dto.Name;
+        if (dto.Price is not null)
+        {
+            if (dto.Price < 0) return BadRequest(new { message = "Qiymət mənfi ola bilməz." });
+            item.Price = dto.Price.Value;
+        }
+        if (dto.Emoji is not null) item.Emoji = dto.Emoji;
+        if (dto.Type is not null) item.Type = dto.Type;
+        if (dto.ItemType is not null) item.ItemType = dto.ItemType;
+        if (dto.Rarity is not null) item.Rarity = dto.Rarity;
+        if (dto.Game is not null) item.Game = dto.Game;
+        if (dto.GameColor is not null) item.GameColor = dto.GameColor;
+        if (dto.GameBg is not null) item.GameBg = dto.GameBg;
+        if (dto.GameBorder is not null) item.GameBorder = dto.GameBorder;
+        if (dto.Desc is not null) item.Desc = dto.Desc;
+
+        await _context.SaveChangesAsync();
+
+        return Ok(item);
+    }
+
     // DELETE /api/shop/{id} — Admin only, removes item by ID
     [HttpDelete("{id:int}")]
     [Authorize(Roles = "Admin")]

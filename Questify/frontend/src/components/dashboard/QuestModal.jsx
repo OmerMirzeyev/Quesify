@@ -1,9 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
 
+const QUESTION_TIME_SECONDS = 45;
+const TIME_FREEZE_BONUS_SECONDS = 20;
+
 export default function QuestModal({ quest, onClose }) {
-  const { completeQuest, completedQuests, user, deductHeart, useJoker, t, activeProgrammingLanguage, addFailedQuestion, triggerAIExplanation } = useApp();
-  
+  const { completeQuest, completedQuests, user, deductHeart, useJoker, useTimeFreeze, useHintCard, useAnswerChange, t, activeProgrammingLanguage, addFailedQuestion, triggerAIExplanation } = useApp();
+
   const [currentQIdx, setCurrentQIdx] = useState(0);
   const [selectedOption, setSelectedOption] = useState(null);
   const [checked, setChecked] = useState(false);
@@ -11,14 +14,18 @@ export default function QuestModal({ quest, onClose }) {
   const [feedback, setFeedback] = useState('');
   const [showHint, setShowHint] = useState(false);
   const [eliminatedOptions, setEliminatedOptions] = useState([]); // indices eliminated by joker
+  const [flaggedOption, setFlaggedOption] = useState(null); // index soft-flagged by a Hint Card
+  const [timeLeft, setTimeLeft] = useState(QUESTION_TIME_SECONDS);
+  const [answerChangeUsed, setAnswerChangeUsed] = useState(false); // once per question
 
   if (!quest) return null;
 
   const isAlreadyCompleted = (completedQuests[activeProgrammingLanguage] || []).includes(quest.id);
-  
+
   // Backwards compatibility if quest structure lacks challenges array
   const challengeList = quest.challenges || [quest.challenge];
   const currentChallenge = challengeList[currentQIdx];
+  const noHearts = user.hearts <= 0 && !isAlreadyCompleted;
 
   const handleOptionClick = (idx) => {
     if (eliminatedOptions.includes(idx)) return;
@@ -56,6 +63,31 @@ export default function QuestModal({ quest, onClose }) {
     }
   };
 
+  // Per-question countdown auto-submits whatever is selected (or a blank/wrong attempt if
+  // nothing was picked) — same outcome as clicking "Check Answer", just triggered by the clock.
+  const handleTimeUp = useCallback(() => {
+    if (selectedOption === null) {
+      setIsCorrect(false);
+      setChecked(true);
+      setFeedback('⏰ Vaxt bitdi! ' + t('wrongMsg'));
+      addFailedQuestion(quest.id, currentChallenge);
+      deductHeart();
+      return;
+    }
+    handleCheck();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedOption, currentChallenge, quest.id]);
+
+  useEffect(() => {
+    if (checked || isAlreadyCompleted || noHearts) return undefined;
+    if (timeLeft <= 0) {
+      handleTimeUp();
+      return undefined;
+    }
+    const id = setTimeout(() => setTimeLeft((prev) => prev - 1), 1000);
+    return () => clearTimeout(id);
+  }, [timeLeft, checked, isAlreadyCompleted, noHearts, handleTimeUp]);
+
   const handleNextQuestion = () => {
     setCurrentQIdx(prev => prev + 1);
     setSelectedOption(null);
@@ -64,6 +96,9 @@ export default function QuestModal({ quest, onClose }) {
     setFeedback('');
     setShowHint(false);
     setEliminatedOptions([]);
+    setFlaggedOption(null);
+    setAnswerChangeUsed(false);
+    setTimeLeft(QUESTION_TIME_SECONDS);
   };
 
   const handleClaim = () => {
@@ -73,16 +108,16 @@ export default function QuestModal({ quest, onClose }) {
 
   const handleJokerClick = () => {
     if (eliminatedOptions.length > 0 || checked || isAlreadyCompleted) return;
-    
+
     // Find incorrect options
     const incorrectIndices = currentChallenge.options
       .map((_, idx) => idx)
       .filter(idx => idx !== currentChallenge.correctIndex);
-    
+
     // Pick 2 random to eliminate
     const shuffled = incorrectIndices.sort(() => 0.5 - Math.random());
     const toEliminate = shuffled.slice(0, 2);
-    
+
     if (useJoker()) {
       setEliminatedOptions(toEliminate);
       if (toEliminate.includes(selectedOption)) {
@@ -91,12 +126,44 @@ export default function QuestModal({ quest, onClose }) {
     }
   };
 
+  // Hint Card — soft-flags one incorrect option (not removed, just marked) beyond the free hint.
+  const handleHintCardClick = () => {
+    if (checked || isAlreadyCompleted || flaggedOption !== null) return;
+    const incorrectIndices = currentChallenge.options
+      .map((_, idx) => idx)
+      .filter((idx) => idx !== currentChallenge.correctIndex && !eliminatedOptions.includes(idx));
+    if (incorrectIndices.length === 0) return;
+    const pick = incorrectIndices[Math.floor(Math.random() * incorrectIndices.length)];
+    if (useHintCard()) {
+      setFlaggedOption(pick);
+      setShowHint(true);
+    }
+  };
+
+  // Freeze Time — spends a charge for extra time on the current question's clock.
+  const handleFreezeClick = () => {
+    if (checked || isAlreadyCompleted) return;
+    if (useTimeFreeze()) {
+      setTimeLeft((prev) => prev + TIME_FREEZE_BONUS_SECONDS);
+    }
+  };
+
+  // Answer Change — after a wrong check, refund the heart just lost and let the user retry once.
+  const handleAnswerChangeClick = () => {
+    if (!checked || isCorrect || isAlreadyCompleted || answerChangeUsed) return;
+    if (useAnswerChange()) {
+      setAnswerChangeUsed(true);
+      setChecked(false);
+      setSelectedOption(null);
+      setFeedback('');
+    }
+  };
+
   const difficultyClass =
     quest.difficulty === 'Asan' ? 'badge-easy' :
     quest.difficulty === 'Orta' ? 'badge-medium' : 'badge-hard';
 
   const isLastQuestion = currentQIdx === challengeList.length - 1;
-  const noHearts = user.hearts <= 0 && !isAlreadyCompleted;
 
   return (
     <div className="modal-overlay" onClick={onClose}>
@@ -146,8 +213,22 @@ export default function QuestModal({ quest, onClose }) {
               <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--accent-purple-light)', textTransform: 'uppercase' }}>
                 {t('knowledgeCheck')}
               </span>
-              <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)' }}>
-                {t('questionProgress', { current: currentQIdx + 1, total: challengeList.length })}
+              <span style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)' }}>
+                  {t('questionProgress', { current: currentQIdx + 1, total: challengeList.length })}
+                </span>
+                {!checked && !isAlreadyCompleted && (
+                  <span
+                    style={{
+                      fontSize: '0.72rem', fontWeight: 800, padding: '0.1rem 0.5rem', borderRadius: '100px',
+                      color: timeLeft <= 10 ? 'var(--accent-red)' : 'var(--accent-cyan)',
+                      background: timeLeft <= 10 ? 'rgba(239,68,68,0.1)' : 'rgba(34,211,238,0.08)',
+                      border: `1px solid ${timeLeft <= 10 ? 'rgba(239,68,68,0.3)' : 'rgba(34,211,238,0.25)'}`,
+                    }}
+                  >
+                    ⏱️ {timeLeft}s
+                  </span>
+                )}
               </span>
             </div>
 
@@ -160,9 +241,15 @@ export default function QuestModal({ quest, onClose }) {
                 const isEliminated = eliminatedOptions.includes(idx);
                 const isSelected = selectedOption === idx;
                 
+                const isFlagged = flaggedOption === idx && !isEliminated;
+
                 let borderStyle = '1px solid var(--border-color)';
                 let bgStyle = 'var(--bg-card)';
                 let opacity = isEliminated ? 0.3 : 1;
+
+                if (isFlagged) {
+                  borderStyle = '1px dashed var(--accent-red)';
+                }
 
                 if (isSelected) {
                   borderStyle = '1px solid var(--accent-purple)';
@@ -207,6 +294,11 @@ export default function QuestModal({ quest, onClose }) {
                       {String.fromCharCode(65 + idx)}
                     </div>
                     <span style={{ flex: 1, textDecoration: isEliminated ? 'line-through' : 'none' }}>{opt}</span>
+                    {isFlagged && (
+                      <span style={{ fontSize: '0.68rem', fontWeight: 700, color: 'var(--accent-red)', flexShrink: 0 }} title="Hint Kartı bunun düzgün olma ehtimalını aşağı görür">
+                        ❓ Ehtimal aşağı
+                      </span>
+                    )}
                   </button>
                 );
               })}
@@ -222,26 +314,50 @@ export default function QuestModal({ quest, onClose }) {
                 💡 {t('hint')}
               </button>
 
-              {!isAlreadyCompleted && user.jokers > 0 && !checked && eliminatedOptions.length === 0 && (
-                <button
-                  type="button"
-                  className="btn btn-gold btn-sm"
-                  onClick={handleJokerClick}
-                  style={{ fontSize: '0.78rem', padding: '0.35rem 0.85rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
-                >
-                  🃏 50/50 Joker İstifadə Et <span style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '100px', padding: '0.05rem 0.4rem', fontSize: '0.72rem' }}>{user.jokers}</span>
-                </button>
-              )}
-              {!isAlreadyCompleted && user.jokers === 0 && eliminatedOptions.length === 0 && !checked && (
-                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
-                  🃏 Joker yoxdur — <button type="button" style={{ background:'none', color:'var(--accent-gold)', fontSize: '0.72rem', fontWeight:700, cursor:'pointer' }}>Dükkandan al</button>
-                </span>
-              )}
-              {eliminatedOptions.length > 0 && (
-                <span style={{ fontSize: '0.72rem', color: 'var(--accent-gold)', fontWeight: 700 }}>
-                  ✅ 50/50 tətbiq edildi — 2 yanlış variant silindi!
-                </span>
-              )}
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                {!isAlreadyCompleted && !checked && user.timeFreezes > 0 && (
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    onClick={handleFreezeClick}
+                    style={{ fontSize: '0.75rem', padding: '0.3rem 0.7rem', display: 'flex', alignItems: 'center', gap: '0.3rem', color: 'var(--accent-cyan)', borderColor: 'rgba(34,211,238,0.35)' }}
+                  >
+                    ⏱️ Vaxtı Dondur <span style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '100px', padding: '0.05rem 0.4rem', fontSize: '0.68rem' }}>{user.timeFreezes}</span>
+                  </button>
+                )}
+
+                {!isAlreadyCompleted && !checked && flaggedOption === null && user.hintCards > 0 && (
+                  <button
+                    type="button"
+                    className="btn btn-outline btn-sm"
+                    onClick={handleHintCardClick}
+                    style={{ fontSize: '0.75rem', padding: '0.3rem 0.7rem', display: 'flex', alignItems: 'center', gap: '0.3rem', color: 'var(--accent-purple-light)', borderColor: 'rgba(139,92,246,0.35)' }}
+                  >
+                    🔍 Hint Kartı <span style={{ background: 'rgba(0,0,0,0.15)', borderRadius: '100px', padding: '0.05rem 0.4rem', fontSize: '0.68rem' }}>{user.hintCards}</span>
+                  </button>
+                )}
+
+                {!isAlreadyCompleted && user.jokers > 0 && !checked && eliminatedOptions.length === 0 && (
+                  <button
+                    type="button"
+                    className="btn btn-gold btn-sm"
+                    onClick={handleJokerClick}
+                    style={{ fontSize: '0.78rem', padding: '0.35rem 0.85rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                  >
+                    🃏 50/50 Joker İstifadə Et <span style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '100px', padding: '0.05rem 0.4rem', fontSize: '0.72rem' }}>{user.jokers}</span>
+                  </button>
+                )}
+                {!isAlreadyCompleted && user.jokers === 0 && eliminatedOptions.length === 0 && !checked && (
+                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                    🃏 Joker yoxdur — <button type="button" style={{ background:'none', color:'var(--accent-gold)', fontSize: '0.72rem', fontWeight:700, cursor:'pointer' }}>Dükkandan al</button>
+                  </span>
+                )}
+                {eliminatedOptions.length > 0 && (
+                  <span style={{ fontSize: '0.72rem', color: 'var(--accent-gold)', fontWeight: 700 }}>
+                    ✅ 50/50 tətbiq edildi!
+                  </span>
+                )}
+              </div>
             </div>
 
             {showHint && (
@@ -277,6 +393,18 @@ export default function QuestModal({ quest, onClose }) {
             {!isAlreadyCompleted && checked && !isCorrect && (
               <button type="button" className="btn btn-outline" onClick={() => { setChecked(false); setSelectedOption(null); setFeedback(''); }} style={{ flex: 1, height: '48px' }}>
                 Yenidən Cəhd Et
+              </button>
+            )}
+
+            {!isAlreadyCompleted && checked && !isCorrect && !answerChangeUsed && user.answerChanges > 0 && (
+              <button
+                type="button"
+                className="btn btn-gold"
+                onClick={handleAnswerChangeClick}
+                style={{ flex: 1, height: '48px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}
+                title="Can itirmədən cavabı dəyiş"
+              >
+                🔁 Cavabı Dəyiş <span style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '100px', padding: '0.05rem 0.4rem', fontSize: '0.72rem' }}>{user.answerChanges}</span>
               </button>
             )}
 

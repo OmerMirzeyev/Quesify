@@ -8,8 +8,5 @@ public class VerifyOtpDto
     public string Email { get; set; } = string.Empty;
 
     [Required]
-    public string ChallengeId { get; set; } = string.Empty;
-
-    [Required]
     public string Code { get; set; } = string.Empty;
 }

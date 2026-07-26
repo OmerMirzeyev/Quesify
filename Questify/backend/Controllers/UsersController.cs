@@ -41,4 +41,25 @@ public class UsersController : ControllerBase
 
         return Ok(users);
     }
+
+    // GET /api/users/{id}/badges — a user's earned badges, oldest-first.
+    [HttpGet("{id:int}/badges")]
+    public async Task<IActionResult> GetUserBadges(int id)
+    {
+        var badges = await _context.UserBadges
+            .Where(ub => ub.UserId == id)
+            .Include(ub => ub.Badge)
+            .OrderBy(ub => ub.EarnedAt)
+            .Select(ub => new
+            {
+                ub.Badge.Code,
+                ub.Badge.Name,
+                ub.Badge.Description,
+                ub.Badge.Emoji,
+                ub.EarnedAt
+            })
+            .ToListAsync();
+
+        return Ok(badges);
+    }
 }

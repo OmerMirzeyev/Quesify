@@ -18,7 +18,7 @@ function formatWeekCountdown(purchasedAt) {
 
 const RARITY_OPTS = ['Common', 'Rare', 'Epic', 'Legendary'];
 const TYPE_OPTS = ['Avatar', 'Nişan', 'İksir', 'Joker', 'Çərçivə', 'Tema'];
-const ITEM_TYPE_OPTS = ['avatar', 'badge', 'potion_heart', 'joker_5050', 'streak_freeze', 'double_xp', 'frame', 'theme'];
+const ITEM_TYPE_OPTS = ['avatar', 'badge', 'potion_heart', 'joker_5050', 'streak_freeze', 'double_xp', 'time_freeze', 'hint_card', 'answer_change', 'frame', 'theme'];
 const EQUIPPABLE_TYPES = ['avatar', 'frame', 'theme'];
 
 const defaultNewItem = {
@@ -30,17 +30,15 @@ const defaultNewItem = {
 
 export default function GoldShop() {
   const {
-    user, purchasedItems, buyItem, t, heartPotionPurchasedAt,
+    purchasedItems, buyItem, t, heartPotionPurchasedAt,
     dynamicShopItems, adminAddShopItem, adminDeleteShopItem, adminSetShopItemStock,
-    coins, hasUnlimitedCoins, marketInventory, equipMarketItem
+    coins, hasUnlimitedCoins, marketInventory, equipMarketItem, isAdmin,
   } = useApp();
 
   const [tick, setTick] = useState(0);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newItem, setNewItem] = useState(defaultNewItem);
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);
-
-  const isAdmin = user?.role === 'Admin';
 
   // Refresh countdown every minute
   useEffect(() => {
@@ -96,7 +94,7 @@ export default function GoldShop() {
               onClick={() => setShowAddModal(true)}
               style={{ fontSize: '0.82rem', padding: '0.4rem 0.85rem', background: 'linear-gradient(135deg, #8b5cf6, #6d28d9)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
             >
-              <PlusCircle size={15} /> Yeni İtem
+              <PlusCircle size={15} /> {t('shopNewItemBtn')}
             </button>
           )}
           <div style={{ fontSize: '1.25rem', fontWeight: 800, color: 'var(--accent-gold-light)', background: 'rgba(245, 158, 11, 0.1)', padding: '0.4rem 1rem', borderRadius: '100px', border: '1px solid rgba(245, 158, 11, 0.3)' }}>
@@ -124,7 +122,7 @@ export default function GoldShop() {
           if (isOwned && isEquippable) {
             actionBtn = isEquipped ? (
               <button className="btn btn-outline btn-disabled" disabled style={{ width: '100%', marginTop: 'auto', fontSize: '0.82rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}>
-                <CheckCircle2 size={15} /> Taxılıb
+                <CheckCircle2 size={15} /> {t('shopEquippedBtn')}
               </button>
             ) : (
               <button
@@ -132,7 +130,7 @@ export default function GoldShop() {
                 onClick={() => equipMarketItem(item.id)}
                 style={{ width: '100%', marginTop: 'auto', fontSize: '0.82rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem' }}
               >
-                <Shirt size={15} /> Geyin
+                <Shirt size={15} /> {t('shopEquipBtn')}
               </button>
             );
           } else if (isOwned) {
@@ -150,7 +148,7 @@ export default function GoldShop() {
           } else if (outOfStock) {
             actionBtn = (
               <button className="btn btn-disabled" disabled style={{ width: '100%', marginTop: 'auto', fontSize: '0.75rem', background: 'rgba(239,68,68,0.08)', borderColor: 'rgba(239,68,68,0.25)', color: 'var(--accent-red)' }}>
-                📦 Stok bitib
+                📦 {t('shopOutOfStock')}
               </button>
             );
           } else {
@@ -357,12 +355,12 @@ export default function GoldShop() {
         <div className="modal-overlay" onClick={() => setDeleteConfirmId(null)}>
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '320px', textAlign: 'center' }}>
             <div style={{ display: 'flex', justifyContent: 'center', marginBottom: '1rem', color: 'var(--accent-red)' }}><Trash2 size={40} /></div>
-            <h3 style={{ marginBottom: '0.75rem', color: 'var(--accent-red)' }}>İtemi Sil?</h3>
+            <h3 style={{ marginBottom: '0.75rem', color: 'var(--accent-red)' }}>{t('shopDeleteConfirmTitle')}</h3>
             <p style={{ color: 'var(--text-secondary)', fontSize: '0.88rem', marginBottom: '1.5rem' }}>
-              Bu itemi mağazadan silmək istədiyinizə əminsinizmi?
+              {t('shopDeleteConfirmBody')}
             </p>
             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
-              <button className="btn btn-outline" onClick={() => setDeleteConfirmId(null)}>Ləğv et</button>
+              <button className="btn btn-outline" onClick={() => setDeleteConfirmId(null)}>{t('cancel')}</button>
               <button
                 className="btn btn-primary"
                 style={{ background: 'var(--accent-red)', borderColor: 'var(--accent-red)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}

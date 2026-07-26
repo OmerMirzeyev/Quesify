@@ -51,7 +51,7 @@ export default function Dashboard() {
                 {t('switchTrackLabel')}
               </strong>
               <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                Kurs: <strong style={{ color: 'var(--accent-purple-light)' }}>{activeProgrammingLanguage}</strong>
+                {t('courseLabel')}: <strong style={{ color: 'var(--accent-purple-light)' }}>{activeProgrammingLanguage}</strong>
               </span>
             </div>
           </div>
@@ -88,7 +88,7 @@ export default function Dashboard() {
             }}
           >
             <span style={{ fontWeight: 700, fontSize: '0.78rem', color: 'var(--accent-purple-light)' }}>
-              🌍 Yeni Dil Əlavə Et
+              {t('addNewLanguageLabel')}
             </span>
             <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
               {lockedTracks.map((lang) => (

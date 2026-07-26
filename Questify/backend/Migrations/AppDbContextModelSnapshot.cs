@@ -17,6 +17,74 @@ namespace backend.Migrations
 #pragma warning disable 612, 618
             modelBuilder.HasAnnotation("ProductVersion", "10.0.10");
 
+            modelBuilder.Entity("backend.Models.Badge", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Code")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Description")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Emoji")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Code")
+                        .IsUnique();
+
+                    b.ToTable("Badges");
+                });
+
+            modelBuilder.Entity("backend.Models.Course", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("ChapterCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Icon")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsAvailable")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("LevelCount")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("Slug")
+                        .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("SortOrder")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("Courses");
+                });
+
             modelBuilder.Entity("backend.Models.LoginOtp", b =>
                 {
                     b.Property<int>("Id")
@@ -148,8 +216,17 @@ namespace backend.Migrations
                     b.Property<int>("Coins")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("CurrentStreak")
+                        .HasColumnType("INTEGER");
+
                     b.Property<string>("Email")
                         .IsRequired()
+                        .HasColumnType("TEXT");
+
+                    b.Property<string>("EmailOtpCode")
+                        .HasColumnType("TEXT");
+
+                    b.Property<DateTime?>("EmailOtpExpiresAt")
                         .HasColumnType("TEXT");
 
                     b.Property<string>("Emoji")
@@ -168,8 +245,17 @@ namespace backend.Migrations
                     b.Property<bool>("HasUnlimitedCoins")
                         .HasColumnType("INTEGER");
 
+                    b.Property<int>("HighestStreak")
+                        .HasColumnType("INTEGER");
+
                     b.Property<bool>("IsBanned")
                         .HasColumnType("INTEGER");
+
+                    b.Property<bool>("IsEmailVerified")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime?>("LastActiveDate")
+                        .HasColumnType("TEXT");
 
                     b.Property<string>("LastName")
                         .IsRequired()
@@ -186,12 +272,40 @@ namespace backend.Migrations
                     b.Property<DateTime?>("TimeoutUntil")
                         .HasColumnType("TEXT");
 
+                    b.Property<int>("Xp")
+                        .HasColumnType("INTEGER");
+
                     b.HasKey("Id");
 
                     b.HasIndex("Email")
                         .IsUnique();
 
                     b.ToTable("Users");
+                });
+
+            modelBuilder.Entity("backend.Models.UserBadge", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("INTEGER");
+
+                    b.Property<int>("BadgeId")
+                        .HasColumnType("INTEGER");
+
+                    b.Property<DateTime>("EarnedAt")
+                        .HasColumnType("TEXT");
+
+                    b.Property<int>("UserId")
+                        .HasColumnType("INTEGER");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BadgeId");
+
+                    b.HasIndex("UserId", "BadgeId")
+                        .IsUnique();
+
+                    b.ToTable("UserBadges");
                 });
 
             modelBuilder.Entity("backend.Models.UserInventory", b =>
@@ -264,6 +378,25 @@ namespace backend.Migrations
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
+
+                    b.Navigation("User");
+                });
+
+            modelBuilder.Entity("backend.Models.UserBadge", b =>
+                {
+                    b.HasOne("backend.Models.Badge", "Badge")
+                        .WithMany()
+                        .HasForeignKey("BadgeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("backend.Models.User", "User")
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Badge");
 
                     b.Navigation("User");
                 });

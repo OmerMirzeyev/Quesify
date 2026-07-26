@@ -1,21 +1,26 @@
 import React, { useMemo } from 'react';
 import { motion, AnimatePresence, useMotionValue, useTransform, useSpring } from 'framer-motion';
-import { Check, ShieldCheck, Swords, Users } from 'lucide-react';
+import { Check, FileCheck, Swords, Users } from 'lucide-react';
+import { useApp } from '../../context/AppContext';
 
-// Presentational marketing stats for the landing hero — static display copy, not a live backend
-// feed (Questify has no course-enrollment analytics endpoint to source this from).
+// Course cards source real enrollment counts from GET /api/courses/stats (passed in as
+// courseStats, keyed by Course.Slug) — these Slug/color/labelKey entries are just display
+// metadata, never the numbers themselves.
 const COURSE_STATS = [
-  { label: 'C# Course', value: '12,450', color: '#8b5cf6' },
-  { label: 'Java Course', value: '8,300', color: '#f97316' },
-  { label: 'Python Course', value: '15,100', color: '#3b82f6' },
+  { slug: 'C#', labelKey: 'statsCourseCSharp', color: '#8b5cf6' },
+  { slug: 'Java', labelKey: 'statsCourseJava', color: '#f97316' },
+  { slug: 'Python', labelKey: 'statsCoursePython', color: '#3b82f6' },
 ];
 
+// Aggregate site-wide stats stay static marketing copy — Questify has no analytics endpoint
+// for total-quests-completed or active-gamer counts to source these from.
 const AGGREGATE_STATS = [
-  { label: 'Total Quests Solved', value: '248,900+', icon: Swords },
-  { label: 'Active RPG Gamers', value: '35,850+', icon: Users },
+  { labelKey: 'statsTotalQuests', value: '248,900+', icon: Swords },
+  { labelKey: 'statsActiveGamers', value: '35,850+', icon: Users },
 ];
 
-export function LiveStatsPanel() {
+export function LiveStatsPanel({ courseStats = {} }) {
+  const { t } = useApp();
   return (
     <motion.div
       className="auth-stats-panel"
@@ -24,23 +29,27 @@ export function LiveStatsPanel() {
       transition={{ duration: 0.55, delay: 0.35 }}
     >
       <div className="auth-stats-course-row">
-        {COURSE_STATS.map((s) => (
-          <div key={s.label} className="auth-stats-course-chip" style={{ borderColor: `${s.color}55` }}>
-            <span className="auth-stats-course-value" style={{ color: s.color }}>{s.value}</span>
-            <span className="auth-stats-course-label">{s.label}</span>
-            <span className="auth-stats-course-sub">Active Students</span>
-          </div>
-        ))}
+        {COURSE_STATS.map((s) => {
+          const count = courseStats[s.slug];
+          const display = typeof count === 'number' ? count.toLocaleString('en-US') : '—';
+          return (
+            <div key={s.labelKey} className="auth-stats-course-chip" style={{ borderColor: `${s.color}55` }}>
+              <span className="auth-stats-course-value" style={{ color: s.color }}>{display}</span>
+              <span className="auth-stats-course-label">{t(s.labelKey)}</span>
+              <span className="auth-stats-course-sub">{t('statsActiveStudents')}</span>
+            </div>
+          );
+        })}
       </div>
       <div className="auth-stats-aggregate-row">
         {AGGREGATE_STATS.map((s) => {
           const Icon = s.icon;
           return (
-            <div key={s.label} className="auth-stats-aggregate-chip">
+            <div key={s.labelKey} className="auth-stats-aggregate-chip">
               <Icon size={16} className="auth-stats-aggregate-icon" />
               <div>
                 <div className="auth-stats-aggregate-value">{s.value}</div>
-                <div className="auth-stats-aggregate-label">{s.label}</div>
+                <div className="auth-stats-aggregate-label">{t(s.labelKey)}</div>
               </div>
             </div>
           );
@@ -138,8 +147,10 @@ export function FloatingBadge({ children, style = {}, duration = 4, delay = 0, c
   );
 }
 
-// "I'm not a robot" style human-verification checkbox with an animated checkmark.
-export function SecurityCheckbox({ checked, onChange, error }) {
+// Mandatory Terms of Service / Privacy Policy acknowledgement checkbox — gates Step 1
+// progression on the register form until checked.
+export function TermsCheckbox({ checked, onChange, error }) {
+  const { t } = useApp();
   return (
     <div className="security-checkbox-wrap">
       <button
@@ -147,7 +158,7 @@ export function SecurityCheckbox({ checked, onChange, error }) {
         className={`security-checkbox-box ${checked ? 'checked' : ''} ${error ? 'has-error' : ''}`}
         onClick={() => onChange(!checked)}
         aria-pressed={checked}
-        aria-label="Təhlükəsizlik təsdiqi: Mən robot deyiləm"
+        aria-label={t('termsAgreeText')}
       >
         <AnimatePresence>
           {checked && (
@@ -164,10 +175,8 @@ export function SecurityCheckbox({ checked, onChange, error }) {
         </AnimatePresence>
       </button>
       <div className="security-checkbox-label" onClick={() => onChange(!checked)}>
-        <ShieldCheck size={17} className="security-checkbox-icon" />
-        <span>
-          Təhlükəsizlik Təsdiqi: <strong>Mən robot deyiləm</strong>
-        </span>
+        <FileCheck size={17} className="security-checkbox-icon" />
+        <span>{t('termsAgreeText')}</span>
       </div>
     </div>
   );

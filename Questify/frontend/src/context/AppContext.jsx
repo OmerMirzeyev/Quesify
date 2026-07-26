@@ -48,11 +48,16 @@ export const AppProvider = ({ children }) => {
   const [isLoggedIn, setIsLoggedIn] = useState(false);
   const [sessionEmail, setSessionEmail] = useState(null);
   const [userRole, setUserRole] = useState('');
-  const [theme, setTheme] = useState('dark');
+  // Single source of truth for "is the logged-in user an admin" — derived from userRole, which
+  // is always set fresh from the backend JWT's role claim at login/hydration (see setAuthSession
+  // callers below). Components should read this instead of re-deriving admin status from the
+  // locally-cached, per-progress `user.role` field, which can drift out of sync with the backend.
+  const isAdmin = isAdminRole(userRole);
+  const [theme, setTheme] = useState(() => localStorage.getItem('questify_theme') || 'dark');
   const [currentTab, setCurrentTab] = useState('dashboard');
   const [toast, setToast] = useState(null);
 
-  const [language, setLanguage] = useState('az');
+  const [language, setLanguage] = useState(() => localStorage.getItem('questify_lang') || 'az');
 
   const t = (key, params = {}) => {
     let text = translations[language][key] || translations['az'][key] || key;
@@ -125,6 +130,42 @@ export const AppProvider = ({ children }) => {
   // One-shot "next completed level gives 2x XP" flag, consumed by a Double XP Potion purchase.
   const [doubleXpPending, setDoubleXpPending] = useState(false);
   const [streakFreezes, setStreakFreezes] = useState(0);
+
+  // Backend-authoritative gamification state: daily streak, earned badges, this user's numeric
+  // backend Id (needed for the /api/users/{id}/badges lookup), and the live global leaderboard.
+  const [streak, setStreak] = useState({ current: 0, highest: 0 });
+  const [userBadges, setUserBadges] = useState([]);
+  const [backendUserId, setBackendUserId] = useState(null);
+  const [liveLeaderboard, setLiveLeaderboard] = useState([]);
+
+  const loadUserBadges = async (id) => {
+    if (!id) return;
+    try {
+      const { ok, data } = await apiFetch(`/api/users/${id}/badges`, { auth: true });
+      if (ok) setUserBadges(data);
+    } catch { /* offline */ }
+  };
+
+  // POST /api/auth/heartbeat — rolls the daily streak forward (once per calendar day) and
+  // returns the caller's current totals. Called on login and on every session hydration so the
+  // streak advances even when a still-valid token means the user never re-submits the login form.
+  const loadStreak = async () => {
+    try {
+      const { ok, data } = await apiFetch('/api/auth/heartbeat', { method: 'POST', auth: true });
+      if (ok) {
+        setStreak({ current: data.currentStreak ?? 0, highest: data.highestStreak ?? 0 });
+        setBackendUserId(data.id ?? null);
+        loadUserBadges(data.id);
+      }
+    } catch { /* offline */ }
+  };
+
+  const loadLiveLeaderboard = async () => {
+    try {
+      const { ok, data } = await apiFetch('/api/leaderboard');
+      if (ok) setLiveLeaderboard(data);
+    } catch { /* offline */ }
+  };
 
   // Load shop items from backend on mount
   const loadShopItems = async () => {
@@ -243,6 +284,25 @@ export const AppProvider = ({ children }) => {
         showToast(`Xəta: ${status}`, '❌');
       }
     } catch { showToast('Əlaqə xətası', '❌'); }
+  };
+
+  // Admin shop management — partial update (price/description/etc), used by the admin panel's
+  // shop management section. Mirrors adminAddShopItem's apiFetch/loadShopItems/showToast pattern.
+  const adminUpdateShopItem = async (itemId, changes) => {
+    try {
+      const { ok, status } = await apiFetch(`/api/shop/${itemId}`, {
+        method: 'PUT',
+        auth: true,
+        body: changes,
+      });
+      if (ok) {
+        await loadShopItems();
+        showToast('Məhsul yeniləndi!', '✅');
+      } else {
+        showToast(`Xəta: ${status}`, '❌');
+      }
+      return ok;
+    } catch { showToast('Əlaqə xətası', '❌'); return false; }
   };
 
   const adminDeleteShopItem = async (itemId, itemName) => {
@@ -422,6 +482,8 @@ export const AppProvider = ({ children }) => {
       checkBanStatus(session.email);
       loadMarketInventory();
       loadMapProgress();
+      loadStreak();
+      loadLiveLeaderboard();
 
       // A JWT issued before a ban/timeout could otherwise keep granting admin calls past its
       // expiry since nothing previously checked authTokenExpiration after writing it.
@@ -510,7 +572,12 @@ export const AppProvider = ({ children }) => {
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('questify_theme', theme);
   }, [theme]);
+
+  useEffect(() => {
+    localStorage.setItem('questify_lang', language);
+  }, [language]);
 
   useEffect(() => {
     if (!isLoggedIn) return;
@@ -577,8 +644,8 @@ export const AppProvider = ({ children }) => {
     setTimeout(() => setToast(null), 3000);
   };
 
-  const register = ({ firstName, lastName, email, password, emoji, avatarUrl }) => {
-    const result = registerUser({ firstName, lastName, email, password, emoji, avatarUrl });
+  const register = ({ firstName, lastName, email, password, emoji, avatarUrl, role }) => {
+    const result = registerUser({ firstName, lastName, email, password, emoji, avatarUrl, role });
     if (!result.ok) return result;
     // Show welcome bonus toast after a small delay (caller handles modal close)
     setTimeout(() => {
@@ -588,7 +655,15 @@ export const AppProvider = ({ children }) => {
   };
 
   const login = (email, password, backendData = null) => {
-    const auth = authenticateUser(email, password);
+    let auth = authenticateUser(email, password);
+    if (!auth.ok && backendData) {
+      // backendData only exists when /api/auth/login (or Google/OTP-verify) already
+      // authenticated this user server-side — the only way the local mirror check above can
+      // still fail is a stale cached password (e.g. after a backend password reset). Trust the
+      // backend and heal the mirror instead of rejecting a login the server already approved.
+      const healed = updateRegisteredUserByEmail(email, { password });
+      if (healed) auth = { ok: true, user: healed };
+    }
     if (!auth.ok) return auth;
 
     skipPersistRef.current = true;
@@ -616,6 +691,8 @@ export const AppProvider = ({ children }) => {
 
     loadMarketInventory();
     loadMapProgress();
+    loadStreak();
+    loadLiveLeaderboard();
 
     return { ok: true, user: auth.user, role };
   };
@@ -637,6 +714,10 @@ export const AppProvider = ({ children }) => {
     setCoins(0);
     setHasUnlimitedCoins(false);
     setMapProgress([]);
+    setStreak({ current: 0, highest: 0 });
+    setUserBadges([]);
+    setBackendUserId(null);
+    setLiveLeaderboard([]);
   };
 
   const selectPrimaryLanguage = (lang) => {
@@ -779,6 +860,39 @@ export const AppProvider = ({ children }) => {
     return false;
   };
 
+  // Freeze Time — pauses the per-question timer for a few seconds (QuestModal owns the timer
+  // itself; this just spends the charge and hands back whether it was allowed).
+  const useTimeFreeze = () => {
+    if (user.timeFreezes > 0) {
+      setUser((prev) => ({ ...prev, timeFreezes: prev.timeFreezes - 1 }));
+      return true;
+    }
+    return false;
+  };
+
+  // Hint Card — spends a charge to reveal an extra clue (flags one wrong option) beyond the
+  // always-free text hint.
+  const useHintCard = () => {
+    if (user.hintCards > 0) {
+      setUser((prev) => ({ ...prev, hintCards: prev.hintCards - 1 }));
+      return true;
+    }
+    return false;
+  };
+
+  // Answer Change — spends a charge to retry a wrong answer without losing the heart it cost.
+  const useAnswerChange = () => {
+    if (user.answerChanges > 0) {
+      setUser((prev) => ({
+        ...prev,
+        answerChanges: prev.answerChanges - 1,
+        hearts: Math.min(3, prev.hearts + 1),
+      }));
+      return true;
+    }
+    return false;
+  };
+
   // Spends real backend-tracked Coins (not the legacy local `gold`) and records the purchase
   // server-side via /api/market/purchase — this used to be a purely local/optimistic mutation
   // that the backend never learned about at all.
@@ -856,6 +970,18 @@ export const AppProvider = ({ children }) => {
       setDoubleXpPending(true);
       showToast('Double XP Potion aktivləşdi! Növbəti tamamladığınız səviyyə 2x XP verəcək.', '⚡');
       pushNotification('shop', 'Double XP Potion aktivləşdi! ⚡', '⚡');
+    } else if (item.itemType === 'time_freeze') {
+      setUser((prev) => ({ ...prev, timeFreezes: prev.timeFreezes + 1 }));
+      showToast('Freeze Time alındı! Sual taymerini dayandırar.', '⏱️');
+      pushNotification('shop', 'Freeze Time alındı! ⏱️', '⏱️');
+    } else if (item.itemType === 'hint_card') {
+      setUser((prev) => ({ ...prev, hintCards: prev.hintCards + 1 }));
+      showToast('Hint Kartı alındı! Əlavə ipucu üçün istifadə edin.', '🔍');
+      pushNotification('shop', 'Hint Kartı alındı! 🔍', '🔍');
+    } else if (item.itemType === 'answer_change') {
+      setUser((prev) => ({ ...prev, answerChanges: prev.answerChanges + 1 }));
+      showToast('Cavabı Dəyiş alındı! Yanlış cavabdan sonra can itirmədən yenidən cəhd edə bilərsiniz.', '🔁');
+      pushNotification('shop', 'Cavabı Dəyiş alındı! 🔁', '🔁');
     }
 
     return true;
@@ -1031,8 +1157,27 @@ export const AppProvider = ({ children }) => {
     showToast('İstifadəçi silindi', '🗑️');
   };
 
+  // Global tab is backend-authoritative (live across devices, sorted by real Xp); per-track tabs
+  // stay on the local trackStats-derived leaderboard for now, since Xp isn't tracked per-track
+  // server-side.
   const getLeaderboard = (track) => {
-    if (track === 'Global') return getGlobalLeaderboard(sessionEmail);
+    if (track === 'Global') {
+      return liveLeaderboard.map((entry) => ({
+        id: entry.id,
+        email: null,
+        name: `${entry.firstName} ${entry.lastName}`.trim() || user.username,
+        firstName: entry.firstName,
+        lastName: entry.lastName,
+        emoji: entry.emoji || '🎮',
+        customProfileImage: entry.avatarUrl || null,
+        xp: entry.xp ?? 0,
+        streak: entry.currentStreak ?? 0,
+        gold: 0,
+        level: null,
+        role: entry.role,
+        isCurrentUser: backendUserId != null && entry.id === backendUserId,
+      }));
+    }
     return getLeaderboardForTrack(track, sessionEmail);
   };
 
@@ -1216,6 +1361,8 @@ export const AppProvider = ({ children }) => {
     isHydrated,
     isLoggedIn,
     sessionEmail,
+    userRole,
+    isAdmin,
     register,
     login,
     logout,
@@ -1230,6 +1377,9 @@ export const AppProvider = ({ children }) => {
     addHeart,
     deductHeart,
     useJoker,
+    useTimeFreeze,
+    useHintCard,
+    useAnswerChange,
     timeUntilNextHeart,
     quests,
     completedQuests,
@@ -1248,6 +1398,7 @@ export const AppProvider = ({ children }) => {
     timeoutUntil,
     dynamicShopItems,
     adminAddShopItem,
+    adminUpdateShopItem,
     adminDeleteShopItem,
     adminBanUser,
     adminUnbanUser,
@@ -1298,7 +1449,6 @@ export const AppProvider = ({ children }) => {
     markChatAsRead,
     markAllChatsRead,
     claimTreasureChest,
-    userRole,
     setUserRole,
     // Backend-authoritative coin wallet + map progress
     coins,
@@ -1312,6 +1462,12 @@ export const AppProvider = ({ children }) => {
     equipMarketItem,
     streakFreezes,
     doubleXpPending,
+    // Gamification: daily streak, earned badges, live global leaderboard
+    streak,
+    userBadges,
+    backendUserId,
+    liveLeaderboard,
+    loadLiveLeaderboard,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

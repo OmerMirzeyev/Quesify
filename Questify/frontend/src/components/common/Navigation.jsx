@@ -17,6 +17,7 @@ export default function Navigation() {
     markAllNotificationsRead,
     clearNotifications,
     userRole,
+    streak,
   } = useApp();
 
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -89,6 +90,11 @@ export default function Navigation() {
         {/* Gold Badge */}
         <div className="nav-gold-badge">
           🪙 <span id="nav-gold-count">{isAppAdmin(userRole) ? '∞' : user.gold.toLocaleString()}</span>
+        </div>
+
+        {/* Streak Badge */}
+        <div className="nav-gold-badge nav-streak-badge" title={t('navStreakTooltip', { count: streak.current })}>
+          🔥 <span id="nav-streak-count">{streak.current}</span>
         </div>
 
         {/* Notification Bell — dropdown opens below, no tab change */}

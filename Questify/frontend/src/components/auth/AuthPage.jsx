@@ -1,11 +1,21 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Eye, EyeOff, ShieldCheck, Sparkles, Trophy, Coins } from 'lucide-react';
+import { Eye, EyeOff, ShieldCheck } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { apiFetch } from '../../utils/api';
-import { clearAuthSession, setAuthSession, getRegisteredUsers } from '../../utils/storage';
-import { TiltCard, ParticleField, FloatingBadge, SecurityCheckbox, LiveStatsPanel } from './AuthVisualExtras';
+import {
+  clearAuthSession, setAuthSession, getRegisteredUsers,
+  normalizeRole, isAdminRole, updateRegisteredUserByEmail, updateUserProgressFields,
+} from '../../utils/storage';
+import { TiltCard, ParticleField, TermsCheckbox, LiveStatsPanel } from './AuthVisualExtras';
 import TechGlobe3D from './TechGlobe3D';
+import AuthTopNav from './AuthTopNav';
+import LandingSections from './LandingSections';
+import GoogleSignInButton from './GoogleSignInButton';
+import OtpDigitInput from './OtpDigitInput';
+import OtpCountdown from './OtpCountdown';
+
+const OTP_TTL_MS = 10 * 60 * 1000; // matches backend EmailOtpTtlMinutes
 
 const AVATAR_OPTIONS = [
   { emoji: '🎮', label: 'Gamer',    color: '#8b5cf6' },
@@ -18,10 +28,9 @@ const AVATAR_OPTIONS = [
   { emoji: '🦸', label: 'Hero',     color: '#fbbf24' },
 ];
 
-const STEPS = ['Hesab', 'Avatar', 'Başlayaq'];
-
 export default function AuthPage() {
   const { register, login, setCurrentTab, t } = useApp();
+  const STEPS = [t('authStepAccount'), t('authStepAvatar'), t('authStepStart')];
 
   const [mode, setMode] = useState('register');  // 'register' | 'login'
   const [step, setStep] = useState(1);            // 1 | 2 | 3 (register only)
@@ -49,15 +58,33 @@ export default function AuthPage() {
   const [successMsg, setSuccessMsg] = useState('');
   const [showWelcomeSplash, setShowWelcomeSplash] = useState(false);
 
+  // ── Real per-course enrollment counts (GET /api/courses/stats), keyed by Course.Slug — feeds
+  // both the globe tooltips and the stat cards below it. Empty until it resolves, so both
+  // consumers fall back to an em dash instead of a stale/fake number.
+  const [courseStats, setCourseStats] = useState({});
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch('/api/courses/stats')
+      .then(({ ok, data }) => {
+        if (cancelled || !ok || !Array.isArray(data)) return;
+        const bySlug = {};
+        data.forEach((c) => { bySlug[c.slug] = c.students; });
+        setCourseStats(bySlug);
+      })
+      .catch(() => { /* offline — keep showing the em-dash fallback */ });
+    return () => { cancelled = true; };
+  }, []);
+
   // ── Security / human-verification checkbox (Step 1 gate) ──
   const [securityChecked, setSecurityChecked] = useState(false);
 
-  // ── OTP / 2FA step — set once register or login issues a challenge instead of a token ──
-  const [pendingAuth, setPendingAuth] = useState(null); // { mode: 'register'|'login', email, challengeId }
+  // ── Email OTP step — set once register issues a verification challenge instead of a token ──
+  const [pendingAuth, setPendingAuth] = useState(null); // { mode: 'register', email }
   const [otpCode, setOtpCode] = useState('');
   const [otpLoading, setOtpLoading] = useState(false);
   const [otpError, setOtpError] = useState('');
   const [otpInfo, setOtpInfo] = useState('');
+  const [otpExpiresAt, setOtpExpiresAt] = useState(null);
 
   // ── Login: password visibility toggle ──
   const [showPassword, setShowPassword] = useState(false);
@@ -78,6 +105,7 @@ export default function AuthPage() {
   const [fpSuccess, setFpSuccess] = useState('');
   const [fpShowNew, setFpShowNew] = useState(false);
   const [fpShowConfirm, setFpShowConfirm] = useState(false);
+  const [fpExpiresAt, setFpExpiresAt] = useState(null);
 
   const switchMode = (newMode) => {
     setSlideDir(newMode === 'login' ? 'left' : 'right');
@@ -100,6 +128,7 @@ export default function AuthPage() {
     setFpError('');
     setFpSuccess('');
     setFpLoading(false);
+    setFpExpiresAt(null);
     setShowForgotModal(true);
   };
 
@@ -108,7 +137,7 @@ export default function AuthPage() {
     const file = e.target.files[0];
     if (!file) return;
     if (!file.type.startsWith('image/')) {
-      setError('Yalnız şəkil faylı seçin.');
+      setError(t('errImageOnly'));
       return;
     }
     setCustomAvatarFile(file);
@@ -130,11 +159,11 @@ export default function AuthPage() {
   const handleStep1 = (e) => {
     e.preventDefault();
     const errors = {};
-    if (!form.firstName.trim()) errors.firstName = 'Adınızı daxil edin';
-    if (!form.lastName.trim()) errors.lastName = 'Soyadınızı daxil edin';
-    if (!form.email.trim()) errors.email = 'Düzgün e-poçt ünvanı daxil edin';
-    if (!form.password.trim()) errors.password = 'Şifrəni daxil edin';
-    if (!form.confirmPassword.trim()) errors.confirmPassword = 'Şifrələr üst-üstə düşmür!';
+    if (!form.firstName.trim()) errors.firstName = t('errFirstNameRequired');
+    if (!form.lastName.trim()) errors.lastName = t('errLastNameRequired');
+    if (!form.email.trim()) errors.email = t('errEmailInvalid');
+    if (!form.password.trim()) errors.password = t('errPasswordRequired');
+    if (!form.confirmPassword.trim()) errors.confirmPassword = t('errConfirmPasswordMismatch');
 
     if (Object.keys(errors).length > 0) {
       setValidationErrors(errors);
@@ -142,20 +171,20 @@ export default function AuthPage() {
     }
 
     if (!/\S+@\S+\.\S+/.test(form.email)) {
-      setValidationErrors({ email: 'Düzgün e-poçt ünvanı daxil edin' });
+      setValidationErrors({ email: t('errEmailInvalid') });
       return;
     }
     if (form.password.length < 6) {
-      setValidationErrors({ password: 'Şifrə minimum 6 simvol olmalıdır' });
+      setValidationErrors({ password: t('errPasswordMinLength') });
       return;
     }
     if (form.password !== form.confirmPassword) {
-      setValidationErrors({ confirmPassword: 'Şifrələr üst-üstə düşmür!' });
+      setValidationErrors({ confirmPassword: t('errConfirmPasswordMismatch') });
       return;
     }
 
     if (!securityChecked) {
-      setValidationErrors({ security: 'Davam etmək üçün təhlükəsizlik təsdiqini işarələyin.' });
+      setValidationErrors({ security: t('errTermsRequired') });
       return;
     }
 
@@ -183,14 +212,14 @@ export default function AuthPage() {
 
     if (!localRegResult.ok) {
       console.error('Lokal qeydiyyat xətası:', localRegResult);
-      setOtpError('Lokal qeydiyyat uğursuz oldu.');
+      setOtpError(t('errRegisterFailed'));
       return;
     }
 
     const localLoginResult = login(form.email, form.password, data);
     if (!localLoginResult.ok) {
       console.error('Lokal giriş xətası:', localLoginResult);
-      setOtpError('Lokal giriş uğursuz oldu.');
+      setOtpError(t('errRegisterFailed'));
       return;
     }
 
@@ -205,32 +234,75 @@ export default function AuthPage() {
 
   /* ── Login completion — login no longer requires OTP, so this runs directly off /api/auth/login's
      response (same shape/logic that used to run after OTP verification). ── */
-  const completeLogin = (data) => {
+  // `emailOverride`/`passwordOverride` let Google Sign-In (which has no login-form fields to
+  // read from) drive the exact same local-account bookkeeping as a normal password login.
+  const completeLogin = (data, emailOverride, passwordOverride) => {
     const { role, avatarUrl, emoji } = data;
     setAuthSession({ token: data.token, role: data.role, expiration: data.expiration });
 
+    const loginEmail = (emailOverride ?? data.email ?? form.email).trim();
+    const loginPassword = passwordOverride ?? form.password;
+    const normalizedLoginEmail = loginEmail.toLowerCase();
     const users = getRegisteredUsers();
-    const localUser = users.find((u) => u.email === form.email.trim().toLowerCase());
+    const localUser = users.find((u) => u.email === normalizedLoginEmail);
     if (!localUser) {
       register({
         firstName: role === 'Admin' ? 'Admin' : 'İstifadəçi',
         lastName: 'Questify',
-        email: form.email.trim(),
-        password: form.password,
+        email: loginEmail,
+        password: loginPassword,
         emoji: role === 'Admin' ? '🛡️' : (emoji || '🎮'),
         avatarUrl: avatarUrl || '',
+        role,
       });
+    } else if (isAdminRole(role) !== isAdminRole(localUser.role)) {
+      // Self-heal: the backend's JWT role is authoritative. If this browser's cached local
+      // role (registeredUsers entry + per-user progress.user.role, both read by the map-unlock
+      // and leaderboard-exclusion logic) ever drifted out of sync with it — e.g. an account
+      // promoted to Admin before this reconciliation existed — fix it on every login instead of
+      // requiring a manual localStorage wipe.
+      const fixedRole = normalizeRole(role);
+      updateRegisteredUserByEmail(normalizedLoginEmail, { role: fixedRole });
+      updateUserProgressFields(normalizedLoginEmail, { role: fixedRole });
     }
 
-    const result = login(form.email, form.password, data);
+    const result = login(loginEmail, loginPassword, data);
     if (!result.ok) {
       clearAuthSession();
-      setError('E-poçt və ya şifrə yanlışdır.');
+      setError(t('errEmailOrPasswordWrong'));
       return;
     }
 
     if (role === 'Admin') setCurrentTab('admin');
   };
+
+  /* ── Google Sign-In — verified server-side in /api/auth/google, which returns the same
+     AuthResponse shape as login (now including email/avatarUrl/emoji) so completeLogin can
+     drive it without ever needing the login form's email/password fields. ── */
+  const handleGoogleCredential = async (credential) => {
+    setLoading(true);
+    setError('');
+    try {
+      const { ok, data } = await apiFetch('/api/auth/google', {
+        method: 'POST',
+        body: { credential },
+      });
+      if (!ok) {
+        setError(data?.message || t('errGoogleFailed'));
+        return;
+      }
+      // Local-only mirror password — never sent anywhere, just keeps the localStorage auth
+      // mirror (see storage.js authenticateUser) consistent across repeated Google sign-ins.
+      const localPassword = `google-oauth:${data.token.slice(-32)}`;
+      completeLogin(data, data.email, localPassword);
+    } catch {
+      setError(t('errServerUnreachable'));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleGoogleUnavailable = () => setError(t('googleNotConfigured'));
 
   /* ── Step 2 → 3 (submit): request the backend account + issue an OTP challenge ── */
   const handleRegister = async () => {
@@ -255,23 +327,24 @@ export default function AuthPage() {
         setLoading(false);
         setError(
           status === 409
-            ? 'Bu e-poçt artıq qeydiyyatdan keçib.'
-            : (data?.message || 'Qeydiyyat uğursuz oldu.')
+            ? t('errEmailTaken')
+            : (data?.message || t('errRegisterFailed'))
         );
         setStep(1);
         return;
       }
 
-      // Registration succeeded — an OTP challenge was issued instead of a token.
-      setPendingAuth({ mode: 'register', email: data.email, challengeId: data.challengeId });
+      // Registration succeeded — an email verification challenge was issued instead of a token.
+      setPendingAuth({ mode: 'register', email: data.email });
       setOtpCode('');
       setOtpError('');
-      setOtpInfo(data.message || 'Doğrulama kodu hazırlandı.');
+      setOtpInfo(data.message || t('otpReadyMsg'));
+      setOtpExpiresAt(Date.now() + OTP_TTL_MS);
       setLoading(false);
     } catch (err) {
       console.error(err);
       setLoading(false);
-      setError('Serverə qoşulmaq mümkün olmadı. Backend işlədiyindən əmin olun.');
+      setError(t('errServerUnreachable'));
       setStep(1);
     }
   };
@@ -280,8 +353,8 @@ export default function AuthPage() {
   const handleLogin = async (e) => {
     e.preventDefault();
     const errors = {};
-    if (!form.email.trim()) errors.email = 'Düzgün e-poçt ünvanı daxil edin';
-    if (!form.password.trim()) errors.password = 'Şifrəni daxil edin';
+    if (!form.email.trim()) errors.email = t('errEmailInvalid');
+    if (!form.password.trim()) errors.password = t('errPasswordRequired');
 
     if (Object.keys(errors).length > 0) {
       setValidationErrors(errors);
@@ -305,8 +378,8 @@ export default function AuthPage() {
       if (!ok) {
         setError(
           status === 403
-            ? (data?.message || 'Hesabınız bloklanıb!')
-            : 'E-poçt və ya şifrə yanlışdır.'
+            ? (data?.message || t('errEmailOrPasswordWrong'))
+            : t('errEmailOrPasswordWrong')
         );
         return;
       }
@@ -314,34 +387,34 @@ export default function AuthPage() {
       // No OTP step for login — straight in with the real token.
       completeLogin(data);
     } catch {
-      setError('Serverə qoşulmaq mümkün olmadı. Backend işlədiyindən əmin olun.');
+      setError(t('errServerUnreachable'));
     } finally {
       setLoading(false);
     }
   };
 
-  /* ── OTP verify/resend/cancel ── */
+  /* ── Email OTP verify/resend/cancel ── */
   const handleVerifyOtp = async (e) => {
     e.preventDefault();
     if (!pendingAuth) return;
     if (!otpCode.trim() || otpCode.trim().length < 6) {
-      setOtpError('6 rəqəmli doğrulama kodunu daxil edin.');
+      setOtpError(t('errOtpCodeLength'));
       return;
     }
     setOtpLoading(true);
     setOtpError('');
     try {
-      const { ok, data } = await apiFetch('/api/auth/verify-otp', {
+      const { ok, data } = await apiFetch('/api/auth/verify-email-otp', {
         method: 'POST',
-        body: { email: pendingAuth.email, challengeId: pendingAuth.challengeId, code: otpCode.trim() },
+        body: { email: pendingAuth.email, code: otpCode.trim() },
       });
       if (!ok) {
-        setOtpError(data?.message || 'Yanlış doğrulama kodu.');
+        setOtpError(data?.message || t('errOtpWrong'));
         return;
       }
       completeAuthWithBackendData(data);
     } catch {
-      setOtpError('Serverə qoşulmaq mümkün olmadı.');
+      setOtpError(t('errServerUnreachable'));
     } finally {
       setOtpLoading(false);
     }
@@ -354,12 +427,17 @@ export default function AuthPage() {
     try {
       const { ok, data } = await apiFetch('/api/auth/resend-otp', {
         method: 'POST',
-        body: { email: pendingAuth.email, challengeId: pendingAuth.challengeId },
+        body: { email: pendingAuth.email },
       });
-      setOtpInfo(ok ? (data?.message || 'Yeni kod göndərildi.') : '');
-      if (!ok) setOtpError(data?.message || 'Kod yenidən göndərilə bilmədi.');
+      setOtpInfo(ok ? (data?.message || t('otpResentMsg')) : '');
+      if (ok) {
+        setOtpCode('');
+        setOtpExpiresAt(Date.now() + OTP_TTL_MS);
+      } else {
+        setOtpError(data?.message || t('errOtpResendFailed'));
+      }
     } catch {
-      setOtpError('Serverə qoşulmaq mümkün olmadı.');
+      setOtpError(t('errServerUnreachable'));
     } finally {
       setOtpLoading(false);
     }
@@ -370,6 +448,7 @@ export default function AuthPage() {
     setOtpCode('');
     setOtpError('');
     setOtpInfo('');
+    setOtpExpiresAt(null);
     setLoading(false);
   };
 
@@ -379,15 +458,15 @@ export default function AuthPage() {
     setShowForgotModal(false);
   };
 
-  // Step 1: request temp password from backend
+  // Step 1: request a password-reset OTP code, emailed by the backend
   const handleFpSendCode = async (e) => {
     e.preventDefault();
     if (!fpEmail.trim()) {
-      setFpError('Düzgün e-poçt ünvanı daxil edin');
+      setFpError(t('errEmailInvalid'));
       return;
     }
     if (!/\S+@\S+\.\S+/.test(fpEmail)) {
-      setFpError('Düzgün e-poçt ünvanı daxil edin');
+      setFpError(t('errEmailInvalid'));
       return;
     }
     setFpLoading(true);
@@ -399,16 +478,40 @@ export default function AuthPage() {
         body: { email: fpEmail.trim() },
       });
       if (!ok) {
-        setFpError(data?.message || 'Xəta baş verdi.');
+        setFpError(data?.message || t('fpErrGeneric'));
         return;
       }
-      // The backend no longer returns the temp password/code in the response (that used to be
-      // a full account-takeover hole — anyone who knew a victim's email could read it back).
-      // It's generated and set server-side; move to the code-entry step.
-      setFpSuccess(data?.message || 'Sıfırlama kodu hazırlandı.');
+      // The backend never returns the code itself in the response (that used to be a full
+      // account-takeover hole — anyone who knew a victim's email could read it back). It's
+      // emailed (or dev-logged) server-side; move to the code-entry step.
+      setFpSuccess(data?.message || t('fpCodeReady'));
+      setFpCode('');
+      setFpExpiresAt(Date.now() + OTP_TTL_MS);
       setFpView('code');
     } catch (err) {
-      setFpError('Servərə qoşulmağın mümkün olmadı.');
+      setFpError(t('errServerUnreachable'));
+    } finally {
+      setFpLoading(false);
+    }
+  };
+
+  const handleFpResendCode = async () => {
+    setFpLoading(true);
+    setFpError('');
+    try {
+      const { ok, data } = await apiFetch('/api/auth/forgot-password', {
+        method: 'POST',
+        body: { email: fpEmail.trim() },
+      });
+      if (ok) {
+        setFpSuccess(data?.message || t('fpCodeReady'));
+        setFpCode('');
+        setFpExpiresAt(Date.now() + OTP_TTL_MS);
+      } else {
+        setFpError(data?.message || t('fpErrGeneric'));
+      }
+    } catch {
+      setFpError(t('errServerUnreachable'));
     } finally {
       setFpLoading(false);
     }
@@ -418,7 +521,7 @@ export default function AuthPage() {
   const handleFpVerifyCode = async (e) => {
     e.preventDefault();
     if (!fpCode.trim()) {
-      setFpError('Doğrulama kodu boş qala bilməz!');
+      setFpError(t('fpErrCodeRequired'));
       return;
     }
     setFpError('');
@@ -429,15 +532,15 @@ export default function AuthPage() {
   const handleFpResetPassword = async (e) => {
     e.preventDefault();
     if (!fpNewPassword.trim()) {
-      setFpError('Yeni şifrə boş qala bilməz!');
+      setFpError(t('fpErrNewPasswordRequired'));
       return;
     }
     if (fpNewPassword.length < 6) {
-      setFpError('Şifrə ən az 6 simvol olmalıdır.');
+      setFpError(t('fpErrPasswordMinLength'));
       return;
     }
     if (fpNewPassword !== fpConfirmPassword) {
-      setFpError('Şifrələr uyğun gəlmir.');
+      setFpError(t('fpErrPasswordMismatch'));
       return;
     }
     setFpLoading(true);
@@ -453,31 +556,36 @@ export default function AuthPage() {
         },
       });
       if (!ok) {
-        setFpError(data?.message || 'Şifrə yenilənmədi.');
+        setFpError(data?.message || t('fpErrPasswordNotUpdated'));
         return;
       }
-      setFpSuccess('Şifrəniz uğurla yeniləndi!');
+      setFpSuccess(t('fpSuccessUpdated'));
       setTimeout(() => {
         closeForgotModal();
-        setSuccessMsg('Şifrəniz yeniləndi. İndi daxil ola bilərsiniz.');
+        setSuccessMsg(t('fpSuccessLoginNow'));
       }, 1600);
     } catch (err) {
-      setFpError('Serverə qoşulmaq mümkün olmadı.');
+      setFpError(t('errServerUnreachable'));
     } finally {
       setFpLoading(false);
     }
   };
 
   const features = [
-    { icon: '⚔️', title: 'RPG Quest System',            desc: 'Interactive coding challenges with instant compiler feedback.', glow: '#8b5cf6' },
-    { icon: '🪙', title: 'Gamified Rewards & Shop',      desc: 'Earn gold coins, buy jokers, profile themes, and exclusive avatars.', glow: '#f59e0b' },
-    { icon: '🏆', title: 'Global Leaderboards & Ranks',  desc: 'Compete with fellow developers and level up your developer profile.', glow: '#22d3ee' },
+    { icon: '⚔️', titleKey: 'featureQuestTitle',       descKey: 'featureQuestDesc',       glow: '#8b5cf6' },
+    { icon: '🪙', titleKey: 'featureRewardsTitle',     descKey: 'featureRewardsDesc',     glow: '#f59e0b' },
+    { icon: '🏆', titleKey: 'featureLeaderboardTitle', descKey: 'featureLeaderboardDesc', glow: '#22d3ee' },
   ];
 
   const avatarDisplayEmoji = selectedAvatar ? selectedAvatar.emoji : '🖼️';
 
   return (
-    <div className="auth-container" style={{ animation: 'fadeIn 0.6s ease' }}>
+    <div className="auth-page-shell">
+      <AuthTopNav
+        onLoginClick={() => switchMode('login')}
+        onStartClick={() => switchMode('register')}
+      />
+      <div className="auth-container" style={{ animation: 'fadeIn 0.6s ease' }}>
 
       {/* ── Welcome Splash Overlay ── */}
       {showWelcomeSplash && (
@@ -488,19 +596,19 @@ export default function AuthPage() {
                 ? <img src={customAvatarPreview} alt="avatar" style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }} />
                 : avatarDisplayEmoji}
             </div>
-            <h1 className="auth-welcome-title">Xoş Gəldiniz!</h1>
+            <h1 className="auth-welcome-title">{t('welcomeTitle')}</h1>
             <p className="auth-welcome-name">{form.firstName} {form.lastName}</p>
             <div className="auth-welcome-bonuses">
               <div className="auth-welcome-bonus-chip gold">
                 <span>🪙</span>
-                <span>+100 Qızıl Bonus</span>
+                <span>{t('welcomeGoldBonus')}</span>
               </div>
               <div className="auth-welcome-bonus-chip heart">
                 <span>❤️</span>
-                <span>3 Can Başlanğıc</span>
+                <span>{t('welcomeHeartStart')}</span>
               </div>
             </div>
-            <p className="auth-welcome-sub">Questify macəranız başlayır...</p>
+            <p className="auth-welcome-sub">{t('welcomeSub')}</p>
             <div className="auth-welcome-particles">
               {[...Array(12)].map((_, i) => (
                 <span key={i} className="auth-welcome-particle" style={{
@@ -524,16 +632,16 @@ export default function AuthPage() {
               <>
                 <div className="fp-modal-header">
                   <div className="fp-modal-icon">🔑</div>
-                  <h2 className="fp-modal-title">Şifrəni Sıfırla</h2>
+                  <h2 className="fp-modal-title">{t('fpResetTitle')}</h2>
                   <p className="fp-modal-sub">
-                    Qeydiyyatlı e-poçtunuzu daxil edin — sıfırlama kodu hazırlanacaq.
+                    {t('fpResetSub')}
                   </p>
                 </div>
 
                 <form onSubmit={handleFpSendCode} className="fp-modal-form" noValidate>
                   {fpError && <div className="auth-banner auth-banner-error">⚠️ {fpError}</div>}
                   <div className="input-group">
-                    <label className="input-label">E-poçt ünvanı</label>
+                    <label className="input-label">{t('emailAddressLabel')}</label>
                     <div className="input-with-icon">
                       <span className="input-icon">✉️</span>
                       <input
@@ -552,7 +660,7 @@ export default function AuthPage() {
                     className={`btn btn-primary fp-submit-btn ${fpLoading ? 'btn-loading' : ''}`}
                     disabled={fpLoading}
                   >
-                    {fpLoading ? 'Hazırlanır...' : '🔑 Sıfırlama Kodu Al →'}
+                    {fpLoading ? t('preparing') : t('getResetCodeBtn')}
                   </button>
                 </form>
               </>
@@ -564,37 +672,34 @@ export default function AuthPage() {
               <>
                 <div className="fp-modal-header">
                   <div className="fp-modal-icon">📨</div>
-                  <h2 className="fp-modal-title">Kodu Daxil Et</h2>
+                  <h2 className="fp-modal-title">{t('enterCodeTitle')}</h2>
                   <p className="fp-modal-sub">
-                    {fpSuccess || 'Doğrulama kodunu daxil edin.'}
+                    {fpSuccess || t('enterCodeSub')}
                   </p>
                 </div>
                 <form onSubmit={handleFpVerifyCode} className="fp-modal-form" noValidate>
                   {fpError && <div className="auth-banner auth-banner-error">⚠️ {fpError}</div>}
                   <div className="input-group">
-                    <label className="input-label">Doğrulama Kodu</label>
-                    <input
-                      type="text"
-                      className="input-field fp-code-input"
-                      placeholder="000000"
-                      maxLength={6}
-                      value={fpCode}
-                      onChange={(e) => setFpCode(e.target.value.replace(/\D/g, ''))}
-                      required
-                      autoFocus
-                    />
+                    <label className="input-label">{t('verificationCodeLabel')}</label>
+                    <OtpDigitInput value={fpCode} onChange={setFpCode} disabled={fpLoading} autoFocus />
+                    {fpExpiresAt && (
+                      <div className="otp-countdown-row">
+                        <span>{t('otpExpiresIn')}</span>
+                        <OtpCountdown expiresAt={fpExpiresAt} onExpire={() => setFpError(t('errOtpExpired'))} />
+                      </div>
+                    )}
                   </div>
                   <div className="fp-resend-row">
-                    <button type="button" className="fp-resend-link" onClick={() => setFpView('email')}>
-                      Kodu yenidən göndər
+                    <button type="button" className="fp-resend-link" onClick={handleFpResendCode} disabled={fpLoading}>
+                      {t('resendCode')}
                     </button>
                   </div>
                   <button
                     type="submit"
                     className={`btn btn-primary fp-submit-btn ${fpLoading ? 'btn-loading' : ''}`}
-                    disabled={fpLoading}
+                    disabled={fpLoading || fpCode.length < 6}
                   >
-                    {fpLoading ? 'Yoxlanılır...' : 'Təsdiqlə →'}
+                    {fpLoading ? t('verifying') : t('confirmArrow')}
                   </button>
                 </form>
               </>
@@ -605,14 +710,14 @@ export default function AuthPage() {
               <>
                 <div className="fp-modal-header">
                   <div className="fp-modal-icon">🔒</div>
-                  <h2 className="fp-modal-title">Yeni Şifrə</h2>
-                  <p className="fp-modal-sub">Hesabınız üçün güclü yeni bir şifrə seçin.</p>
+                  <h2 className="fp-modal-title">{t('newPasswordTitle')}</h2>
+                  <p className="fp-modal-sub">{t('newPasswordSub')}</p>
                 </div>
                 <form onSubmit={handleFpResetPassword} className="fp-modal-form" noValidate>
                   {fpError && <div className="auth-banner auth-banner-error">⚠️ {fpError}</div>}
                   {fpSuccess && <div className="auth-banner auth-banner-success">✅ {fpSuccess}</div>}
                   <div className="input-group">
-                    <label className="input-label">Yeni Şifrə</label>
+                    <label className="input-label">{t('newPasswordLabel')}</label>
                     <div className="input-with-icon">
                       <span className="input-icon">🔒</span>
                       <input
@@ -630,14 +735,14 @@ export default function AuthPage() {
                         type="button"
                         className="pw-toggle-btn"
                         onClick={() => setFpShowNew((v) => !v)}
-                        aria-label={fpShowNew ? 'Şifrəni gizlət' : 'Şifrəni göstər'}
+                        aria-label={fpShowNew ? t('hidePassword') : t('showPassword')}
                       >
                         {fpShowNew ? <EyeOff size={17} /> : <Eye size={17} />}
                       </button>
                     </div>
                   </div>
                   <div className="input-group">
-                    <label className="input-label">Şifrəni Təsdiqlə</label>
+                    <label className="input-label">{t('confirmPasswordLabel')}</label>
                     <div className="input-with-icon">
                       <span className="input-icon">🔑</span>
                       <input
@@ -654,7 +759,7 @@ export default function AuthPage() {
                         type="button"
                         className="pw-toggle-btn"
                         onClick={() => setFpShowConfirm((v) => !v)}
-                        aria-label={fpShowConfirm ? 'Şifrəni gizlət' : 'Şifrəni göstər'}
+                        aria-label={fpShowConfirm ? t('hidePassword') : t('showPassword')}
                       >
                         {fpShowConfirm ? <EyeOff size={17} /> : <Eye size={17} />}
                       </button>
@@ -665,7 +770,7 @@ export default function AuthPage() {
                     className={`btn btn-primary fp-submit-btn ${fpLoading ? 'btn-loading' : ''}`}
                     disabled={fpLoading}
                   >
-                    {fpLoading ? 'Saxlanılır...' : '✅ Şifrəni Yenilə'}
+                    {fpLoading ? t('saving') : t('updatePasswordBtn')}
                   </button>
                 </form>
               </>
@@ -679,13 +784,17 @@ export default function AuthPage() {
         <ParticleField count={22} colors={['#8b5cf6', '#22d3ee', '#f59e0b']} />
 
         <motion.div
-          className="auth-brand"
+          className="auth-community-badge"
           initial={{ opacity: 0, y: -12 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
         >
-          <div className="auth-logo">Q</div>
-          <span className="auth-brand-name">QUESTIFY</span>
+          <span className="auth-community-avatars" aria-hidden="true">
+            <span>🎮</span><span>🧙</span><span>⚔️</span><span>🦊</span>
+          </span>
+          <span>
+            <strong>20,000+</strong> {t('authJoinedSuffix')}
+          </span>
         </motion.div>
 
         <div className="auth-hero" style={{ position: 'relative' }}>
@@ -695,8 +804,8 @@ export default function AuthPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.55, delay: 0.05 }}
           >
-            Oyun oynayaraq<br />
-            <span style={{ color: 'var(--accent-cyan)' }}>dil öyrən</span>
+            {t('authHeadlineLine1')}<br />
+            <span style={{ color: 'var(--accent-cyan)' }}>{t('authHeadlineLine2')}</span>
           </motion.h1>
           <motion.p
             className="auth-subheadline"
@@ -704,41 +813,33 @@ export default function AuthPage() {
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.55, delay: 0.15 }}
           >
-            Sıxıcı dərsləri unudun. Questify ilə proqramlaşdırma öyrənmək bir RPG oyunu oynamaq kimidir.
-            Kod yazın, qızıl qazanın, zirvəyə qalxın!
+            {t('authSubheadline')}
           </motion.p>
 
-          {/* ── 3D Tech Globe — C#/Java/Python/SQL/Git/React nodes orbiting a glowing sphere ── */}
+          {/* ── 3D Tech Globe — the 6 official courses (C#/Java/Python/SQL/C++/React) orbiting a
+               glowing sphere, tooltips backed by real enrollment counts ── */}
           <motion.div
+            id="auth-courses"
             className="tech-globe-section"
             initial={{ opacity: 0, scale: 0.85 }}
             animate={{ opacity: 1, scale: 1 }}
             transition={{ duration: 0.7, delay: 0.2, ease: [0.16, 1, 0.3, 1] }}
             style={{ position: 'relative' }}
           >
-            <TechGlobe3D />
-            <FloatingBadge style={{ top: '4%', right: '2%' }} duration={5}>
-              <Trophy size={13} color="#fbbf24" /> Səviyyə Atla
-            </FloatingBadge>
-            <FloatingBadge style={{ bottom: '10%', left: '0%' }} duration={4.5} delay={1}>
-              <Coins size={13} color="#f59e0b" /> +100 Qızıl
-            </FloatingBadge>
-            <FloatingBadge style={{ top: '42%', right: '-2%' }} duration={6} delay={0.6}>
-              <Sparkles size={13} color="#22d3ee" /> Premium UX
-            </FloatingBadge>
+            <TechGlobe3D courseStats={courseStats} />
           </motion.div>
 
           {/* ── Live learning stats ── */}
-          <LiveStatsPanel />
+          <LiveStatsPanel courseStats={courseStats} />
 
           {/* ── Expanded feature cards ── */}
-          <div className="auth-features">
+          <div id="auth-features" className="auth-features">
             {features.map((f, i) => (
-              <TiltCard key={i} delay={0.25 + i * 0.12} glowColor={f.glow}>
+              <TiltCard key={f.titleKey} delay={0.25 + i * 0.12} glowColor={f.glow}>
                 <div className="auth-feature-icon">{f.icon}</div>
                 <div>
-                  <h3 className="auth-feature-title">{f.title}</h3>
-                  <p className="auth-feature-desc">{f.desc}</p>
+                  <h3 className="auth-feature-title">{t(f.titleKey)}</h3>
+                  <p className="auth-feature-desc">{t(f.descKey)}</p>
                 </div>
               </TiltCard>
             ))}
@@ -763,40 +864,37 @@ export default function AuthPage() {
           >
             {/* ── OTP / 2FA verification step ── */}
             <div className="auth-form-header">
-              <h2 className="auth-form-title">Doğrulama Kodu 🔐</h2>
+              <h2 className="auth-form-title">{t('otpTitle')}</h2>
               <p className="auth-form-subtitle">
-                {otpInfo || `${pendingAuth.email} ünvanına bağlı hesab üçün 6 rəqəmli kod hazırlandı.`}
+                {otpInfo || t('otpSubtitleFallback', { email: pendingAuth.email })}
               </p>
             </div>
             {otpError && <div className="auth-banner auth-banner-error">⚠️ {otpError}</div>}
             <form onSubmit={handleVerifyOtp} className="auth-form" noValidate>
               <div className="input-group">
-                <label className="input-label">Doğrulama Kodu</label>
-                <input
-                  type="text"
-                  className="input-field fp-code-input"
-                  placeholder="000000"
-                  maxLength={6}
-                  value={otpCode}
-                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, ''))}
-                  required
-                  autoFocus
-                />
+                <label className="input-label">{t('verificationCodeLabel')}</label>
+                <OtpDigitInput value={otpCode} onChange={setOtpCode} disabled={otpLoading} autoFocus />
+                {otpExpiresAt && (
+                  <div className="otp-countdown-row">
+                    <span>{t('otpExpiresIn')}</span>
+                    <OtpCountdown expiresAt={otpExpiresAt} onExpire={() => setOtpError(t('errOtpExpired'))} />
+                  </div>
+                )}
               </div>
               <div className="fp-resend-row">
                 <button type="button" className="fp-resend-link" onClick={handleResendOtp} disabled={otpLoading}>
-                  Kodu yenidən göndər
+                  {t('resendCode')}
                 </button>
                 <button type="button" className="fp-resend-link" onClick={cancelOtp}>
-                  ← Geri
+                  {t('goBack')}
                 </button>
               </div>
               <button
                 type="submit"
                 className={`btn btn-primary fp-submit-btn ${otpLoading ? 'btn-loading' : ''}`}
-                disabled={otpLoading}
+                disabled={otpLoading || otpCode.length < 6}
               >
-                {otpLoading ? 'Yoxlanılır...' : 'Təsdiqlə və Daxil Ol →'}
+                {otpLoading ? t('verifying') : t('confirmAndLogin')}
               </button>
             </form>
           </motion.div>
@@ -843,19 +941,19 @@ export default function AuthPage() {
               {step === 1 && (
                 <>
                   <div className="auth-form-header">
-                    <h2 className="auth-form-title">Hesab Yarat 🚀</h2>
-                    <p className="auth-form-subtitle">Pulsuz qeydiyyatdan keçin — 30 saniyə!</p>
+                    <h2 className="auth-form-title">{t('createAccountTitle')}</h2>
+                    <p className="auth-form-subtitle">{t('createAccountSub')}</p>
                   </div>
                   <form onSubmit={handleStep1} className="auth-form" noValidate>
                     <div className="auth-name-row">
                       <div className="input-group">
-                        <label className="input-label">Ad</label>
+                        <label className="input-label">{t('firstNameLabel')}</label>
                         <div className="input-with-icon">
                           <span className="input-icon">👤</span>
                           <input
                             type="text"
                             className="input-field"
-                            placeholder="Adınız"
+                            placeholder={t('firstNamePlaceholder')}
                             value={form.firstName}
                             onChange={(e) => {
                               setForm({ ...form, firstName: e.target.value });
@@ -873,13 +971,13 @@ export default function AuthPage() {
                         )}
                       </div>
                       <div className="input-group">
-                        <label className="input-label">Soyad</label>
+                        <label className="input-label">{t('lastNameLabel')}</label>
                         <div className="input-with-icon">
                           <span className="input-icon">👥</span>
                           <input
                             type="text"
                             className="input-field"
-                            placeholder="Soyadınız"
+                            placeholder={t('lastNamePlaceholder')}
                             value={form.lastName}
                             onChange={(e) => {
                               setForm({ ...form, lastName: e.target.value });
@@ -899,7 +997,7 @@ export default function AuthPage() {
                     </div>
 
                     <div className="input-group">
-                      <label className="input-label">E-poçt ünvanı</label>
+                      <label className="input-label">{t('emailAddressLabel')}</label>
                       <div className="input-with-icon">
                         <span className="input-icon">✉️</span>
                         <input
@@ -924,7 +1022,7 @@ export default function AuthPage() {
                     </div>
 
                     <div className="input-group">
-                      <label className="input-label">Şifrə</label>
+                      <label className="input-label">{t('passwordLabel')}</label>
                       <div className="input-with-icon">
                         <span className="input-icon">🔒</span>
                         <input
@@ -946,7 +1044,7 @@ export default function AuthPage() {
                           type="button"
                           className="pw-toggle-btn"
                           onClick={() => setShowRegPassword((v) => !v)}
-                          aria-label={showRegPassword ? 'Şifrəni gizlət' : 'Şifrəni göstər'}
+                          aria-label={showRegPassword ? t('hidePassword') : t('showPassword')}
                         >
                           {showRegPassword ? <EyeOff size={17} /> : <Eye size={17} />}
                         </button>
@@ -959,7 +1057,7 @@ export default function AuthPage() {
                     </div>
 
                     <div className="input-group">
-                      <label className="input-label">Şifrəni təsdiqlə</label>
+                      <label className="input-label">{t('confirmPasswordFieldLabel')}</label>
                       <div className="input-with-icon">
                         <span className="input-icon">🔑</span>
                         <input
@@ -981,7 +1079,7 @@ export default function AuthPage() {
                           type="button"
                           className="pw-toggle-btn"
                           onClick={() => setShowRegConfirmPassword((v) => !v)}
-                          aria-label={showRegConfirmPassword ? 'Şifrəni gizlət' : 'Şifrəni göstər'}
+                          aria-label={showRegConfirmPassword ? t('hidePassword') : t('showPassword')}
                         >
                           {showRegConfirmPassword ? <EyeOff size={17} /> : <Eye size={17} />}
                         </button>
@@ -996,11 +1094,11 @@ export default function AuthPage() {
                     {/* Welcome bonus preview */}
                     <div className="auth-welcome-preview">
                       <span>🎁</span>
-                      <span>Qeydiyyat bonusu: <strong style={{ color: 'var(--accent-gold-light)' }}>+100 🪙</strong> + <strong style={{ color: '#ef4444' }}>❤️ 3 Can</strong></span>
+                      <span>{t('registerBonusPreview')} <strong style={{ color: 'var(--accent-gold-light)' }}>+100 🪙</strong> + <strong style={{ color: '#ef4444' }}>❤️ 3</strong></span>
                     </div>
 
-                    {/* Security / human-verification checkbox — gates progressing to Step 2 */}
-                    <SecurityCheckbox
+                    {/* Terms of Service / Privacy Policy acknowledgement — gates progressing to Step 2 */}
+                    <TermsCheckbox
                       checked={securityChecked}
                       onChange={(v) => {
                         setSecurityChecked(v);
@@ -1022,8 +1120,15 @@ export default function AuthPage() {
                       className="btn btn-primary"
                       style={{ width: '100%', marginTop: '0.25rem' }}
                     >
-                      Növbəti →
+                      {t('nextArrow')}
                     </button>
+
+                    <div className="auth-divider"><span>{t('orDivider')}</span></div>
+                    <GoogleSignInButton
+                      disabled={loading}
+                      onCredential={handleGoogleCredential}
+                      onUnavailable={handleGoogleUnavailable}
+                    />
                   </form>
                 </>
               )}
@@ -1032,8 +1137,8 @@ export default function AuthPage() {
               {step === 2 && (
                 <>
                   <div className="auth-form-header">
-                    <h2 className="auth-form-title">Avatarını Seç 🎭</h2>
-                    <p className="auth-form-subtitle">Sənin qəhrəmanın kimdir?</p>
+                    <h2 className="auth-form-title">{t('chooseAvatarTitle')}</h2>
+                    <p className="auth-form-subtitle">{t('chooseAvatarSub')}</p>
                   </div>
 
                   <div className="auth-avatar-grid">
@@ -1059,10 +1164,10 @@ export default function AuthPage() {
 
                   {/* ── Custom Image Upload ── */}
                   <div className="auth-avatar-upload-zone">
-                    <p className="auth-avatar-upload-label">— və ya öz şəklinizi yükləyin —</p>
+                    <p className="auth-avatar-upload-label">{t('uploadOwnPhoto')}</p>
                     <div className="auth-avatar-upload-row">
                       <label htmlFor="avatar-file-input" className="btn btn-outline auth-upload-btn">
-                        📁 Şəkil Seç
+                        {t('chooseImageBtn')}
                       </label>
                       <input
                         id="avatar-file-input"
@@ -1106,7 +1211,7 @@ export default function AuthPage() {
                     <div>
                       <div style={{ fontWeight: 800, fontSize: '1rem' }}>{form.firstName} {form.lastName}</div>
                       <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                        {customAvatarPreview ? 'Öz şəkliniz' : (selectedAvatar?.label ?? 'Avatar')} · Yeni Oyunçu
+                        {customAvatarPreview ? t('ownPhotoLabel') : (selectedAvatar?.label ?? 'Avatar')} · {t('newPlayerLabel')}
                       </div>
                     </div>
                   </div>
@@ -1118,7 +1223,7 @@ export default function AuthPage() {
                       style={{ flex: 1 }}
                       onClick={() => { setStep(1); setError(''); }}
                     >
-                      ← Geri
+                      {t('backArrow')}
                     </button>
                     <button
                       id="auth-register-submit-btn"
@@ -1128,7 +1233,7 @@ export default function AuthPage() {
                       disabled={loading}
                       onClick={handleRegister}
                     >
-                      {loading ? t('loading') : '🚀 Qeydiyyat'}
+                      {loading ? t('loading') : t('registerSubmitBtn')}
                     </button>
                   </div>
                 </>
@@ -1138,7 +1243,7 @@ export default function AuthPage() {
               {step === 3 && !showWelcomeSplash && (
                 <div style={{ textAlign: 'center', padding: '2rem 0' }}>
                   <div style={{ fontSize: '3rem', marginBottom: '0.75rem' }}>🎉</div>
-                  <p style={{ fontWeight: 700 }}>Yönləndirilir...</p>
+                  <p style={{ fontWeight: 700 }}>{t('redirecting')}</p>
                 </div>
               )}
             </>
@@ -1148,13 +1253,13 @@ export default function AuthPage() {
           {mode === 'login' && (
             <>
               <div className="auth-form-header">
-                <h2 className="auth-form-title">Xoş Gəldiniz! 👋</h2>
-                <p className="auth-form-subtitle">Davam etmək üçün hesabınıza daxil olun</p>
+                <h2 className="auth-form-title">{t('loginWelcomeTitle')}</h2>
+                <p className="auth-form-subtitle">{t('loginWelcomeSub')}</p>
               </div>
 
               <form onSubmit={handleLogin} className="auth-form" noValidate>
                 <div className="input-group">
-                  <label className="input-label">E-poçt ünvanı</label>
+                  <label className="input-label">{t('emailAddressLabel')}</label>
                   <div className="input-with-icon">
                     <span className="input-icon">✉️</span>
                     <input
@@ -1179,7 +1284,7 @@ export default function AuthPage() {
                 </div>
 
                 <div className="input-group">
-                  <label className="input-label">Şifrə</label>
+                  <label className="input-label">{t('passwordLabel')}</label>
                   <div className="input-with-icon">
                     <span className="input-icon">🔒</span>
                     <input
@@ -1202,7 +1307,7 @@ export default function AuthPage() {
                       id="login-pw-toggle"
                       className="pw-toggle-btn"
                       onClick={() => setShowPassword((v) => !v)}
-                      aria-label={showPassword ? 'Şifrəni gizlət' : 'Şifrəni göstər'}
+                      aria-label={showPassword ? t('hidePassword') : t('showPassword')}
                     >
                       {showPassword ? <EyeOff size={17} /> : <Eye size={17} />}
                     </button>
@@ -1222,7 +1327,7 @@ export default function AuthPage() {
                     className="fp-link-btn"
                     onClick={openForgotModal}
                   >
-                    Şifrəni unutdunuz?
+                    {t('forgotPassword')}
                   </button>
                 </div>
 
@@ -1235,6 +1340,13 @@ export default function AuthPage() {
                 >
                   {loading ? t('loading') : t('loginBtn')}
                 </button>
+
+                <div className="auth-divider"><span>{t('orDivider')}</span></div>
+                <GoogleSignInButton
+                  disabled={loading}
+                  onCredential={handleGoogleCredential}
+                  onUnavailable={handleGoogleUnavailable}
+                />
               </form>
             </>
           )}
@@ -1262,6 +1374,9 @@ export default function AuthPage() {
         </AnimatePresence>
         </div>
       </div>
+      </div>
+
+      <LandingSections onStart={() => switchMode('register')} onSelectCourse={() => switchMode('register')} />
     </div>
   );
 }

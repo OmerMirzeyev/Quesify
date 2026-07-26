@@ -49,22 +49,13 @@ const MapNode = memo(function MapNode({
   onSelect,
   onClaimChest,
 }) {
-  let nodeBg = 'var(--bg-card)';
-  let borderStyle = '3px solid var(--border-color)';
-  let glowGlow = 'none';
-
-  if (completed) {
-    nodeBg = 'var(--gradient-green)';
-    borderStyle = '3px solid var(--accent-green)';
-    glowGlow = '0 0 22px rgba(34, 197, 94, 0.4)';
-  } else if (isActive) {
-    nodeBg = 'var(--gradient-primary)';
-    borderStyle = '3px solid var(--accent-purple)';
-    glowGlow = 'var(--glow-purple)';
-  } else {
-    nodeBg = 'var(--bg-input)';
-    borderStyle = '3px solid rgba(148, 163, 184, 0.15)';
-  }
+  const stateClass = completed
+    ? 'roadmap-node-btn--completed'
+    : isActive
+      ? 'roadmap-node-btn--unlocked'
+      : unlocked
+        ? 'roadmap-node-btn--unlocked'
+        : 'roadmap-node-btn--locked';
 
   const isMilestone = (index + 1) % 4 === 0;
   const chestId = `${activeProgrammingLanguage.toLowerCase()}-chest-${quest.id}`;
@@ -83,14 +74,9 @@ const MapNode = memo(function MapNode({
         <button
           id={`roadmap-node-${quest.id}`}
           type="button"
-          className={`roadmap-node-btn${isActive ? ' roadmap-node-btn--active' : ''}`}
+          className={`roadmap-node-btn ${stateClass}${isActive ? ' roadmap-node-btn--active' : ''}`}
           onClick={() => unlocked && onSelect(quest)}
           disabled={!unlocked}
-          style={{
-            background: nodeBg,
-            border: borderStyle,
-            boxShadow: glowGlow,
-          }}
         >
           {!unlocked ? (
             <div className="roadmap-node-lock">🔒</div>
@@ -160,9 +146,9 @@ export default function QuestsGrid() {
     claimTreasureChest,
     user,
     mapProgress,
+    isAdmin,
+    t,
   } = useApp();
-
-  const isAdmin = user?.role === 'Admin';
 
   const [selectedQuest, setSelectedQuest] = useState(null);
   const [selectedChapterIdx, setSelectedChapterIdx] = useState(0);
@@ -170,6 +156,8 @@ export default function QuestsGrid() {
 
   const mapScrollRef = useRef(null);
   const mapInnerRef = useRef(null);
+  const cloudLayerRef = useRef(null);
+  const treeLayerRef = useRef(null);
 
   const activeCompleted = completedQuests[activeProgrammingLanguage] || [];
   const chapters = QUESTS_BY_CHAPTER[activeProgrammingLanguage] || [];
@@ -252,6 +240,22 @@ export default function QuestsGrid() {
     resetMapScroll();
   }, [activeProgrammingLanguage, selectedChapterIdx, resetMapScroll]);
 
+  // Depth parallax: clouds/trees drift slower than the scroll itself, giving the background a
+  // sense of distance. Mutates layer transforms directly (no React state) to stay cheap on scroll.
+  useEffect(() => {
+    const scrollEl = mapScrollRef.current;
+    if (!scrollEl) return undefined;
+
+    const handleScroll = () => {
+      const y = scrollEl.scrollTop;
+      if (cloudLayerRef.current) cloudLayerRef.current.style.transform = `translateY(${y * -0.12}px)`;
+      if (treeLayerRef.current) treeLayerRef.current.style.transform = `translateY(${y * -0.05}px)`;
+    };
+
+    scrollEl.addEventListener('scroll', handleScroll, { passive: true });
+    return () => scrollEl.removeEventListener('scroll', handleScroll);
+  }, [selectedChapterIdx, activeProgrammingLanguage]);
+
   useEffect(() => {
     const inner = mapInnerRef.current;
     if (!inner) return undefined;
@@ -276,10 +280,10 @@ export default function QuestsGrid() {
         <div className="quests-chapter-top">
           <div>
             <h3 className="quests-chapter-title">
-              🗺️ {activeProgrammingLanguage} · Fəsil Xəritəsi
+              {t('mapChapterTitle', { lang: activeProgrammingLanguage })}
             </h3>
             <p className="quests-chapter-desc">
-              20 səviyyə · Qızıl sandıqlar · Yalnız xəritə aşağı sürüşür
+              {t('mapChapterSubtitle')}
             </p>
           </div>
           <div className="quests-chapter-tabs">
@@ -288,7 +292,7 @@ export default function QuestsGrid() {
               onClick={() => setSelectedChapterIdx(0)}
               className={`btn btn-sm ${selectedChapterIdx === 0 ? 'btn-primary' : 'btn-outline'}`}
             >
-              1. Əsaslar
+              {t('chapterBasics')}
             </button>
             <button
               type="button"
@@ -297,7 +301,7 @@ export default function QuestsGrid() {
               disabled={!isAdmin && !isCh1Completed}
               style={{ opacity: (isAdmin || isCh1Completed) ? 1 : 0.55 }}
             >
-              {!isAdmin && !isCh1Completed && '🔒 '}2. İrəliləmiş
+              {!isAdmin && !isCh1Completed && '🔒 '}{t('chapterAdvanced')}
             </button>
           </div>
         </div>
@@ -322,7 +326,7 @@ export default function QuestsGrid() {
               {currentChapterQuests.length
                 ? Math.round((completedCount / currentChapterQuests.length) * 100)
                 : 0}
-              % tamamlandı
+              % {t('percentCompleted')}
             </div>
           </div>
         </div>
@@ -339,30 +343,34 @@ export default function QuestsGrid() {
           className="roadmap-map-wrapper"
           style={{ height: `${totalMapHeight}px` }}
         >
-          {clouds.map((c, i) => (
-            <div
-              key={`cloud-${i}`}
-              className="floating-cloud roadmap-cloud"
-              style={{
-                left: `${c.x}px`,
-                top: `${c.y}px`,
-                transform: `scale(${c.scale})`,
-                animationDelay: c.delay,
-              }}
-            >
-              ☁️
-            </div>
-          ))}
+          <div ref={cloudLayerRef} className="roadmap-parallax-layer">
+            {clouds.map((c, i) => (
+              <div
+                key={`cloud-${i}`}
+                className="floating-cloud roadmap-cloud"
+                style={{
+                  left: `${c.x}px`,
+                  top: `${c.y}px`,
+                  transform: `scale(${c.scale})`,
+                  animationDelay: c.delay,
+                }}
+              >
+                ☁️
+              </div>
+            ))}
+          </div>
 
-          {trees.map((tree, i) => (
-            <div
-              key={`tree-${i}`}
-              className="roadmap-tree"
-              style={{ left: `${tree.x}px`, top: `${tree.y}px` }}
-            >
-              {tree.type}
-            </div>
-          ))}
+          <div ref={treeLayerRef} className="roadmap-parallax-layer">
+            {trees.map((tree, i) => (
+              <div
+                key={`tree-${i}`}
+                className="roadmap-tree"
+                style={{ left: `${tree.x}px`, top: `${tree.y}px` }}
+              >
+                {tree.type}
+              </div>
+            ))}
+          </div>
 
           <svg
             className="roadmap-path-svg"
@@ -377,13 +385,14 @@ export default function QuestsGrid() {
               strokeLinecap="round"
             />
             <path
+              className="roadmap-path-flow"
               d={pathD}
               fill="none"
               stroke="var(--accent-purple-light)"
               strokeWidth="5"
               strokeDasharray="10 10"
               strokeLinecap="round"
-              opacity="0.7"
+              opacity="0.85"
             />
           </svg>
 

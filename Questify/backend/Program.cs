@@ -22,7 +22,26 @@ builder.Services.AddControllers(options =>
     options.Filters.Add<BanEnforcementFilter>();
 });
 
+// ==========================================
+// 1. Swagger Servislərinin Əlavə Edilməsi
+// ==========================================
+builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddSwaggerGen();
+
 builder.Services.AddSingleton<IPasswordHasher, PasswordHasher>();
+builder.Services.AddScoped<IEmailService, EmailService>();
+builder.Services.AddScoped<IAiService, AiService>();
+
+// Used by AuthController to verify Google Sign-In ID tokens against Google's tokeninfo endpoint.
+builder.Services.AddHttpClient();
+
+// Locks the dev server to the port the frontend's API_BASE_URL/vite proxy expect, even if
+// launchSettings.json is bypassed (e.g. running the built DLL directly) — only in Development,
+// and only when nothing has already pinned a URL via ASPNETCORE_URLS/--urls.
+if (builder.Environment.IsDevelopment() && Environment.GetEnvironmentVariable("ASPNETCORE_URLS") is null)
+{
+    builder.WebHost.UseUrls("http://localhost:5271");
+}
 
 // Anchor the SQLite DB to the project source root (ContentRootPath), not the CWD.
 // This prevents the "empty app.db" issue where dotnet run writes to bin\Debug\net10.0\ instead.
@@ -52,36 +71,54 @@ builder.Services
 
 builder.Services.AddAuthorization();
 
-// Configurable via appsettings' "AllowedOrigins" array (e.g. add a deployed frontend origin
-// there) — falls back to the two local Vite dev ports if not set.
+// Configurable via appsettings' "AllowedOrigins" array — falls back to local Vite dev ports if not set.
 var allowedOrigins = builder.Configuration.GetSection("AllowedOrigins").Get<string[]>()
-    ?? new[] { "http://localhost:5173", "http://localhost:5174" };
+    ?? new[] { "http://localhost:5173", "http://localhost:5174", "http://localhost:5175", "http://localhost:5176", "http://localhost:3000" };
 
 builder.Services.AddCors(options =>
 {
     options.AddPolicy("Default", policy =>
     {
-        policy.WithOrigins(allowedOrigins)
-            .AllowAnyHeader()
-            .AllowAnyMethod()
-            .AllowCredentials();
+        if (builder.Environment.IsDevelopment())
+        {
+            policy.SetIsOriginAllowed(origin => true)
+                .AllowAnyHeader()
+                .AllowAnyMethod()
+                .AllowCredentials();
+        }
+        else
+        {
+            policy.WithOrigins(allowedOrigins)
+                .AllowAnyHeader()
+                .AllowAnyMethod()
+                .AllowCredentials();
+        }
     });
 });
 
 var app = builder.Build();
 
+// ==========================================
+// 2. Swagger Middleware-nin Aktiv Edilməsi
+// ==========================================
+if (app.Environment.IsDevelopment())
+{
+    app.UseSwagger();
+    app.UseSwaggerUI(c =>
+    {
+        c.SwaggerEndpoint("/swagger/v1/swagger.json", "Questify API v1");
+        c.RoutePrefix = "swagger";
+    });
+}
+
 using (var scope = app.Services.CreateScope())
 {
     var dbContext = scope.ServiceProvider.GetRequiredService<AppDbContext>();
 
-    // Applies pending EF Core migrations, creating the DB on first run — does NOT drop
-    // existing data on restart (this used to call EnsureDeleted()+EnsureCreated() on every
-    // startup, wiping the entire database every time the app restarted).
+    // Applies pending EF Core migrations
     dbContext.Database.Migrate();
 
-    // Ensure the built-in "Admin Questify" account exists and is always Role="Admin" — this
-    // self-heals on every startup (not just when the Users table is empty), so it can never be
-    // left demoted by, e.g., an accidental role-change through the admin panel.
+    // Ensure the built-in "Admin Questify" account exists
     var adminUser = dbContext.Users.FirstOrDefault(u => u.Email == "admin@questify.com");
     if (adminUser is null)
     {
@@ -93,17 +130,27 @@ using (var scope = app.Services.CreateScope())
             Email = "admin@questify.com",
             PasswordHash = passwordHasher.HashPassword("AdminPassword123!"),
             Role = "Admin",
-            Emoji = "🛡️"
+            Emoji = "🛡️",
+            IsEmailVerified = true
         };
         dbContext.Users.Add(adminUser);
     }
-    else if (adminUser.Role != "Admin")
+    else
     {
-        adminUser.Role = "Admin";
+        if (adminUser.Role != "Admin")
+        {
+            adminUser.Role = "Admin";
+        }
+        if (!adminUser.IsEmailVerified)
+        {
+            adminUser.IsEmailVerified = true;
+        }
     }
     dbContext.SaveChanges();
 
     ShopSeeder.SeedIfEmpty(dbContext);
+    CourseSeeder.SeedIfEmpty(dbContext);
+    BadgeSeeder.SeedIfEmpty(dbContext);
 }
 
 app.UseRouting();

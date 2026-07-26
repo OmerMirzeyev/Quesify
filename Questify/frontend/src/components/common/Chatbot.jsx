@@ -1,5 +1,64 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useApp } from '../../context/AppContext';
+import { apiFetch } from '../../utils/api';
+
+// Offline/error fallback — used only if the backend AI mentor (POST /api/ai/chat) is
+// unreachable or misconfigured, so the widget never goes completely silent.
+function getFallbackResponse(query) {
+  const lower = query.toLowerCase();
+
+  if (lower.includes('massiv') || lower.includes('array')) {
+    return `💡 Mentor Şərhi:
+Massiv (Array) – eyni tipli məlumatları bir ardıcıllıq şəklində yaddaşda saxlamaq üçün istifadə olunan strukturdur.
+Məsələn, sinifdəki tələbələrin siyahısı. Yadda saxlayın ki, massivlərin indeksləri həmişə 0-dan başlayır!
+
+Nümunə (C#):
+int[] numbers = new int[] { 10, 20, 30 };
+Console.WriteLine(numbers[0]); // 10 çap edəcək`;
+  }
+  if (lower.includes('loop') || lower.includes('dövr') || lower.includes('döngü') || lower.includes('for') || lower.includes('while')) {
+    return `💡 Mentor Şərhi:
+Dövrlər (Loops) – müəyyən bir şərt ödənilənə qədər eyni kod blokunu təkrar-təkrar işlətmək üçün istifadə olunur.
+Ən populyarları 'for' (təkrarlanma sayı əvvəlcədən bəlli olduqda) və 'while' (şərt doğru olduğu müddətcə) dövrləridir.
+
+Nümunə (Python):
+for i in range(3):
+    print("Salam!") # 3 dəfə Salam çap edəcək`;
+  }
+  if (lower.includes('c#') || lower.includes('csharp')) {
+    return `💡 Mentor Şərhi:
+C# – Microsoft tərəfindən yaradılmış, tip təhlükəsizliyi yüksək olan, güclü, obyekt yönümlü proqramlaşdırma dilidir.
+Geniş şəkildə veb (ASP.NET), oyun (Unity engine) və Windows masaüstü tətbiqlərində istifadə olunur.`;
+  }
+  if (lower.includes('java')) {
+    return `💡 Mentor Şərhi:
+Java – 'Bir dəfə yaz, hər yerdə işlət' (Write Once, Run Anywhere) devizi ilə məşhur olan, class-əsaslı, obyekt yönümlü dilidir.
+Böyük korporativ sistemlərdə və Android mobil tətbiq inkişafında geniş istifadə olunur.`;
+  }
+  if (lower.includes('python')) {
+    return `💡 Mentor Şərhi:
+Python – oxunaqlılığı çox yüksək olan, sintaksisi sadə, lakin inanılmaz dərəcədə güclü bir dildir.
+Süni İntellekt (AI), Data Science, Machine Learning və avtomatlaşdırma skriptləri üçün dünya üzrə #1 seçimdir.`;
+  }
+  if (lower.includes('sintaksis') || lower.includes('syntax') || lower.includes('səhv') || lower.includes('error')) {
+    return `💡 Mentor Şərhi:
+Proqramlaşdırmada sintaksis (syntax) – kodun yazılma dil qaydalarıdır. Necə ki Azərbaycan dilində nöqtə-vergül qaydaları var, proqramlaşdırmada da ; və {} simvolları compiler-ə kodu necə oxuyacağını deyir. Bircə dənə ; buraxmaq sintaksis səhvinə yol açır!`;
+  }
+  if (lower.includes('joker')) {
+    return `💡 Mentor Şərhi:
+50/50 Jokeri quizlər zamanı istifadə edə bilərsiniz. O sizə kömək olmaq üçün variantlar sırasından 2 yanlış cavabı tamamilə silir və düzgün cavab tapma şansınızı 2 dəfə artırır!`;
+  }
+  if (lower.includes('can') || lower.includes('iksir') || lower.includes('heart')) {
+    return `💡 Mentor Şərhi:
+Hər dəfə səhv cavab verəndə 1 Can (❤️) itirirsiniz. Canınız bitəndə suallara cavab verə bilməzsiniz.
+Canları bərpa etmək üçün:
+1. Hər 5 dəqiqədən bir avtomatik 1 Can bərpa olunur.
+2. Qızıl Mağazasından qızıllarınızla 'Can İksiri' ala bilərsiniz (Həftəlik 1 ədəd limiti ilə).`;
+  }
+  return `💡 Mentor Şərhi:
+Maraqlı sualdır! Mentor olaraq sizə tövsiyəm, bu mövzunu praktiki kod yazaraq yoxlamaqdır.
+Əlavə olaraq C#, Java və Python yol xəritələrindəki (roadmap) dərsləri bitirməyə çalışın. Hər hansı sintaksis mövzusunu tam dəqiqləşdirmək istəyirsinizsə, mənə yaza bilərsiniz! 🚀`;
+}
 
 export default function Chatbot() {
   const { isChatbotOpen, setIsChatbotOpen, chatbotMessages, setChatbotMessages, chatbotAlert } = useApp();
@@ -12,71 +71,37 @@ export default function Chatbot() {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [chatbotMessages, isTyping]);
 
-  const handleSendMessage = (e) => {
+  const handleSendMessage = async (e) => {
     e.preventDefault();
     const query = inputValue.trim();
     if (!query) return;
 
     // Add user message
     const userMsg = { sender: 'user', text: query };
-    setChatbotMessages(prev => [...prev, userMsg]);
+    const updatedMessages = [...chatbotMessages, userMsg];
+    setChatbotMessages(updatedMessages);
     setInputValue('');
     setIsTyping(true);
 
-    // Simulate typing delay
-    setTimeout(() => {
+    try {
+      const history = updatedMessages
+        .filter((m) => m.sender === 'user' || m.sender === 'bot')
+        .slice(-12)
+        .map((m) => ({ role: m.sender, content: m.text }));
+
+      const { ok, data } = await apiFetch('/api/ai/chat', {
+        method: 'POST',
+        auth: true,
+        body: { messages: history },
+      });
+
+      const reply = ok && data?.reply ? data.reply : getFallbackResponse(query);
+      setChatbotMessages((prev) => [...prev, { sender: 'bot', text: reply }]);
+    } catch {
+      setChatbotMessages((prev) => [...prev, { sender: 'bot', text: getFallbackResponse(query) }]);
+    } finally {
       setIsTyping(false);
-      const lower = query.toLowerCase();
-      let response = '';
-
-      if (lower.includes('massiv') || lower.includes('array')) {
-        response = `💡 Mentor Şərhi:
-Massiv (Array) – eyni tipli məlumatları bir ardıcıllıq şəklində yaddaşda saxlamaq üçün istifadə olunan strukturdur.
-Məsələn, sinifdəki tələbələrin siyahısı. Yadda saxlayın ki, massivlərin indeksləri həmişə 0-dan başlayır!
-
-Nümunə (C#):
-int[] numbers = new int[] { 10, 20, 30 };
-Console.WriteLine(numbers[0]); // 10 çap edəcək`;
-      } else if (lower.includes('loop') || lower.includes('dövr') || lower.includes('döngü') || lower.includes('for') || lower.includes('while')) {
-        response = `💡 Mentor Şərhi:
-Dövrlər (Loops) – müəyyən bir şərt ödənilənə qədər eyni kod blokunu təkrar-təkrar işlətmək üçün istifadə olunur.
-Ən populyarları 'for' (təkrarlanma sayı əvvəlcədən bəlli olduqda) və 'while' (şərt doğru olduğu müddətcə) dövrləridir.
-
-Nümunə (Python):
-for i in range(3):
-    print("Salam!") # 3 dəfə Salam çap edəcək`;
-      } else if (lower.includes('c#') || lower.includes('csharp')) {
-        response = `💡 Mentor Şərhi:
-C# – Microsoft tərəfindən yaradılmış, tip təhlükəsizliyi yüksək olan, güclü, obyekt yönümlü proqramlaşdırma dilidir.
-Geniş şəkildə veb (ASP.NET), oyun (Unity engine) və Windows masaüstü tətbiqlərində istifadə olunur.`;
-      } else if (lower.includes('java')) {
-        response = `💡 Mentor Şərhi:
-Java – 'Bir dəfə yaz, hər yerdə işlət' (Write Once, Run Anywhere) devizi ilə məşhur olan, class-əsaslı, obyekt yönümlü dilidir.
-Böyük korporativ sistemlərdə və Android mobil tətbiq inkişafında geniş istifadə olunur.`;
-      } else if (lower.includes('python')) {
-        response = `💡 Mentor Şərhi:
-Python – oxunaqlılığı çox yüksək olan, sintaksisi sadə, lakin inanılmaz dərəcədə güclü bir dildir.
-Süni İntellekt (AI), Data Science, Machine Learning və avtomatlaşdırma skriptləri üçün dünya üzrə #1 seçimdir.`;
-      } else if (lower.includes('sintaksis') || lower.includes('syntax') || lower.includes('səhv') || lower.includes('error')) {
-        response = `💡 Mentor Şərhi:
-Proqramlaşdırmada sintaksis (syntax) – kodun yazılma dil qaydalarıdır. Necə ki Azərbaycan dilində nöqtə-vergül qaydaları var, proqramlaşdırmada da ; və {} simvolları compiler-ə kodu necə oxuyacağını deyir. Bircə dənə ; buraxmaq sintaksis səhvinə yol açır!`;
-      } else if (lower.includes('joker')) {
-        response = `💡 Mentor Şərhi:
-50/50 Jokeri quizlər zamanı istifadə edə bilərsiniz. O sizə kömək olmaq üçün variantlar sırasından 2 yanlış cavabı tamamilə silir və düzgün cavab tapma şansınızı 2 dəfə artırır!`;
-      } else if (lower.includes('can') || lower.includes('iksir') || lower.includes('heart')) {
-        response = `💡 Mentor Şərhi:
-Hər dəfə səhv cavab verəndə 1 Can (❤️) itirirsiniz. Canınız bitəndə suallara cavab verə bilməzsiniz.
-Canları bərpa etmək üçün:
-1. Hər 5 dəqiqədən bir avtomatik 1 Can bərpa olunur.
-2. Qızıl Mağazasından qızıllarınızla 'Can İksiri' ala bilərsiniz (Həftəlik 1 ədəd limiti ilə).`;
-      } else {
-        response = `💡 Mentor Şərhi:
-Maraqlı sualdır! Mentor olaraq sizə tövsiyəm, bu mövzunu praktiki kod yazaraq yoxlamaqdır.
-Əlavə olaraq C#, Java və Python yol xəritələrindəki (roadmap) dərsləri bitirməyə çalışın. Hər hansı sintaksis mövzusunu tam dəqiqləşdirmək istəyirsinizsə, mənə yaza bilərsiniz! 🚀`;
-      }
-
-      setChatbotMessages(prev => [...prev, { sender: 'bot', text: response }]);
-    }, 1000);
+    }
   };
 
   return (

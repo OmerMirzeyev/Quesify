@@ -1,6 +1,16 @@
 import React, { useState } from 'react';
+import { PlusCircle, Trash2, Minus, Plus, Infinity as InfinityIcon, Save } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { isAdminRole } from '../../utils/storage';
+
+const SHOP_ITEM_TYPE_OPTS = ['avatar', 'badge', 'potion_heart', 'joker_5050', 'streak_freeze', 'double_xp', 'time_freeze', 'hint_card', 'answer_change', 'frame', 'theme'];
+
+const defaultNewShopItem = {
+  name: '', emoji: '⭐', type: 'Joker', itemType: 'joker_5050', price: 100,
+  rarity: 'Common', game: 'Questify', gameColor: '#8b5cf6',
+  gameBg: 'linear-gradient(135deg,#8b5cf622 0%,#5b21b622 100%)',
+  gameBorder: 'rgba(139,92,246,0.4)', desc: '', stock: null,
+};
 
 // Rich Pool of dynamic questions based on Language + Topic + Difficulty combination
 const GENERATED_AI_QUESTIONS = {
@@ -134,10 +144,46 @@ const GENERATED_AI_QUESTIONS = {
 
 export default function AdminPanel() {
   const { usersList, updateUserInfo, deleteUser, addQuest, quests, t,
-          adminBanUser, adminUnbanUser, adminTimeoutUser, adminRemoveTimeout } = useApp();
+          adminBanUser, adminUnbanUser, adminTimeoutUser, adminRemoveTimeout,
+          dynamicShopItems, adminAddShopItem, adminUpdateShopItem, adminDeleteShopItem, adminSetShopItemStock } = useApp();
   const [activeAdminTab, setActiveAdminTab] = useState('users');
   const [timeoutMinutes, setTimeoutMinutes] = useState(10);
   const [timeoutingUserId, setTimeoutingUserId] = useState(null);
+
+  // Shop management tab state
+  const [editingShopId, setEditingShopId] = useState(null); // row currently in inline-edit mode
+  const [shopEditForm, setShopEditForm] = useState({ price: 0, desc: '' });
+  const [showAddShopModal, setShowAddShopModal] = useState(false);
+  const [newShopItem, setNewShopItem] = useState(defaultNewShopItem);
+  const [deleteShopItemId, setDeleteShopItemId] = useState(null);
+
+  const startShopEdit = (item) => {
+    setEditingShopId(item.id);
+    setShopEditForm({ price: item.price, desc: item.desc });
+  };
+
+  const saveShopEdit = async (itemId) => {
+    await adminUpdateShopItem(itemId, { price: Number(shopEditForm.price), desc: shopEditForm.desc });
+    setEditingShopId(null);
+  };
+
+  const adjustShopStock = (item, delta) => {
+    const current = item.stock ?? 0;
+    adminSetShopItemStock(item.id, Math.max(0, current + delta));
+  };
+
+  const handleAddShopItem = () => {
+    if (!newShopItem.name.trim()) return;
+    adminAddShopItem(newShopItem);
+    setShowAddShopModal(false);
+    setNewShopItem(defaultNewShopItem);
+  };
+
+  const confirmDeleteShopItem = () => {
+    const item = dynamicShopItems.find((i) => i.id === deleteShopItemId);
+    if (item) adminDeleteShopItem(item.id, item.name);
+    setDeleteShopItemId(null);
+  };
 
   // Edit User Modal State
   const [editingUser, setEditingUser] = useState(null); // holds user obj
@@ -330,6 +376,13 @@ export default function AdminPanel() {
           style={{ padding: '0.5rem 1.25rem', borderRadius: '8px' }}
         >
           {t('tabQuests')}
+        </button>
+        <button
+          className={`btn ${activeAdminTab === 'shop' ? 'btn-primary' : 'btn-outline'}`}
+          onClick={() => setActiveAdminTab('shop')}
+          style={{ padding: '0.5rem 1.25rem', borderRadius: '8px' }}
+        >
+          {t('adminShopTabLabel')}
         </button>
       </div>
 
@@ -562,6 +615,209 @@ export default function AdminPanel() {
             ➕ {t('addQuestionToLevel')}
           </button>
         </form>
+      )}
+
+      {activeAdminTab === 'shop' && (
+        <div className="card" style={{ padding: '1.25rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+            <div>
+              <strong style={{ fontSize: '0.95rem' }}>{t('adminShopSectionTitle')}</strong>
+              <p style={{ margin: '0.2rem 0 0', fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                {t('adminShopSectionSubtitle')}
+              </p>
+            </div>
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => setShowAddShopModal(true)}
+              style={{ fontSize: '0.82rem', padding: '0.4rem 0.85rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}
+            >
+              <PlusCircle size={15} /> {t('shopNewItemBtn')}
+            </button>
+          </div>
+
+          {dynamicShopItems.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
+              <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🛒</div>
+              <p style={{ margin: 0, fontWeight: 600 }}>Mağaza boşdur.</p>
+            </div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
+                    <th style={{ padding: '0.65rem' }}>Əşya</th>
+                    <th style={{ padding: '0.65rem' }}>Növ</th>
+                    <th style={{ padding: '0.65rem' }}>Qiymət</th>
+                    <th style={{ padding: '0.65rem' }}>Təsvir</th>
+                    <th style={{ padding: '0.65rem' }}>Stok</th>
+                    <th style={{ padding: '0.65rem', textAlign: 'right' }}>Əməliyyatlar</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dynamicShopItems.map((item) => {
+                    const isEditing = editingShopId === item.id;
+                    const hasLimitedStock = typeof item.stock === 'number';
+                    return (
+                      <tr key={item.id} style={{ borderBottom: '1px solid rgba(139, 92, 246, 0.08)', fontSize: '0.85rem' }}>
+                        <td style={{ padding: '0.6rem' }}>
+                          <span style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontWeight: 700 }}>
+                            <span>{item.emoji}</span>
+                            <span>{item.name}</span>
+                          </span>
+                        </td>
+                        <td style={{ padding: '0.6rem' }}>
+                          <span className="badge badge-code" style={{ fontSize: '0.65rem' }}>{item.itemType}</span>
+                        </td>
+                        <td style={{ padding: '0.6rem', minWidth: '90px' }}>
+                          {isEditing ? (
+                            <input
+                              type="number"
+                              min={0}
+                              className="input-field"
+                              style={{ padding: '0.3rem 0.5rem', fontSize: '0.82rem', width: '90px' }}
+                              value={shopEditForm.price}
+                              onChange={(e) => setShopEditForm((f) => ({ ...f, price: e.target.value }))}
+                            />
+                          ) : (
+                            <span style={{ color: 'var(--accent-gold-light)', fontWeight: 700 }}>🪙 {item.price}</span>
+                          )}
+                        </td>
+                        <td style={{ padding: '0.6rem', minWidth: '220px', maxWidth: '320px' }}>
+                          {isEditing ? (
+                            <input
+                              type="text"
+                              className="input-field"
+                              style={{ padding: '0.3rem 0.5rem', fontSize: '0.82rem', width: '100%' }}
+                              value={shopEditForm.desc}
+                              onChange={(e) => setShopEditForm((f) => ({ ...f, desc: e.target.value }))}
+                            />
+                          ) : (
+                            <span style={{ color: 'var(--text-secondary)', fontSize: '0.78rem' }}>{item.desc}</span>
+                          )}
+                        </td>
+                        <td style={{ padding: '0.6rem' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                            <button
+                              type="button"
+                              className="btn btn-outline btn-sm"
+                              style={{ padding: '0.1rem 0.4rem', display: 'flex', alignItems: 'center' }}
+                              onClick={() => adjustShopStock(item, -1)}
+                              disabled={!hasLimitedStock || item.stock <= 0}
+                              title="Stoku azalt"
+                            >
+                              <Minus size={11} />
+                            </button>
+                            <span style={{ fontSize: '0.75rem', fontWeight: 700, minWidth: '60px', textAlign: 'center', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '0.2rem' }}>
+                              {hasLimitedStock ? item.stock : <InfinityIcon size={13} />}
+                            </span>
+                            <button
+                              type="button"
+                              className="btn btn-outline btn-sm"
+                              style={{ padding: '0.1rem 0.4rem', display: 'flex', alignItems: 'center' }}
+                              onClick={() => hasLimitedStock ? adjustShopStock(item, 1) : adminSetShopItemStock(item.id, 10)}
+                              title={hasLimitedStock ? 'Stoku artır' : 'Limitli stok təyin et (10)'}
+                            >
+                              <Plus size={11} />
+                            </button>
+                          </div>
+                        </td>
+                        <td style={{ padding: '0.6rem', textAlign: 'right' }}>
+                          <div style={{ display: 'flex', gap: '0.3rem', justifyContent: 'flex-end' }}>
+                            {isEditing ? (
+                              <>
+                                <button className="btn btn-outline btn-sm" style={{ padding: '0.25rem 0.6rem' }} onClick={() => setEditingShopId(null)}>{t('cancel')}</button>
+                                <button className="btn btn-primary btn-sm" style={{ padding: '0.25rem 0.6rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }} onClick={() => saveShopEdit(item.id)}>
+                                  <Save size={13} /> {t('save')}
+                                </button>
+                              </>
+                            ) : (
+                              <>
+                                <button className="btn btn-outline btn-sm" style={{ padding: '0.25rem 0.6rem' }} onClick={() => startShopEdit(item)}>{t('edit')}</button>
+                                <button
+                                  className="btn btn-outline btn-sm"
+                                  style={{ padding: '0.25rem 0.6rem', color: 'var(--accent-red)', borderColor: 'rgba(239, 68, 68, 0.3)' }}
+                                  onClick={() => setDeleteShopItemId(item.id)}
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Add Shop Item Modal */}
+      {showAddShopModal && (
+        <div className="modal-overlay" onClick={() => setShowAddShopModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '480px', maxHeight: '85vh', overflowY: 'auto' }}>
+            <h3 style={{ marginBottom: '1.25rem' }}>➕ Yeni Mağaza Əşyası</h3>
+
+            {[
+              { label: 'Ad', key: 'name', type: 'text' },
+              { label: 'Emoji', key: 'emoji', type: 'text' },
+              { label: 'Qiymət (Gold)', key: 'price', type: 'number' },
+              { label: 'Təsvir', key: 'desc', type: 'text' },
+            ].map((field) => (
+              <div key={field.key} className="input-group">
+                <label className="input-label">{field.label}</label>
+                <input
+                  type={field.type}
+                  className="input-field"
+                  value={newShopItem[field.key]}
+                  onChange={(e) => setNewShopItem((prev) => ({ ...prev, [field.key]: field.type === 'number' ? Number(e.target.value) : e.target.value }))}
+                />
+              </div>
+            ))}
+
+            <div className="input-group">
+              <label className="input-label">Item Type</label>
+              <select className="input-field" value={newShopItem.itemType} onChange={(e) => setNewShopItem((prev) => ({ ...prev, itemType: e.target.value }))}>
+                {SHOP_ITEM_TYPE_OPTS.map((o) => <option key={o}>{o}</option>)}
+              </select>
+            </div>
+
+            <div className="input-group">
+              <label className="input-label">Stok (boş = limitsiz)</label>
+              <input
+                type="number"
+                min={0}
+                className="input-field"
+                value={newShopItem.stock ?? ''}
+                placeholder="Limitsiz"
+                onChange={(e) => setNewShopItem((prev) => ({ ...prev, stock: e.target.value === '' ? null : Number(e.target.value) }))}
+              />
+            </div>
+
+            <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
+              <button className="btn btn-outline" style={{ flex: 1 }} onClick={() => setShowAddShopModal(false)}>{t('cancel')}</button>
+              <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleAddShopItem}>➕ Əlavə Et</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Delete Shop Item Confirmation Modal */}
+      {deleteShopItemId && (
+        <div className="modal-overlay" onClick={() => setDeleteShopItemId(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '320px', textAlign: 'center' }}>
+            <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>⚠️</div>
+            <h3 style={{ marginBottom: '1rem', color: 'var(--accent-red)' }}>{t('shopDeleteConfirmTitle')}</h3>
+            <p style={{ marginBottom: '1.5rem', color: 'var(--text-secondary)' }}>{t('shopDeleteConfirmBody')}</p>
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+              <button className="btn btn-outline" onClick={() => setDeleteShopItemId(null)}>{t('cancel')}</button>
+              <button className="btn btn-primary" style={{ background: 'var(--accent-red)', borderColor: 'var(--accent-red)' }} onClick={confirmDeleteShopItem}>{t('confirm')}</button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Edit User Modal */}

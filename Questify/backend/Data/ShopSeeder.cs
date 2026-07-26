@@ -43,6 +43,27 @@ public static class ShopSeeder
                 GameBg = "linear-gradient(135deg,#ef444422 0%,#7f1d1d22 100%)", GameBorder = "rgba(239,68,68,0.35)",
                 Desc = "Can Bərpası — 1 can hüququ geri qazandırır. Həftəlik: 1 dəfə."
             },
+            new()
+            {
+                Name = "Freeze Time", Emoji = "⏱️", Price = 60, Type = "Joker", ItemType = "time_freeze",
+                Rarity = "Rare", Game = "Quiz", GameColor = "#38bdf8",
+                GameBg = "linear-gradient(135deg,#38bdf822 0%,#0c4a6e22 100%)", GameBorder = "rgba(56,189,248,0.4)",
+                Desc = "Vaxtı Dondur — sual taymerini bir neçə saniyəlik dayandırır."
+            },
+            new()
+            {
+                Name = "Hint Kartı", Emoji = "🔍", Price = 45, Type = "Joker", ItemType = "hint_card",
+                Rarity = "Common", Game = "Quiz", GameColor = "#22d3ee",
+                GameBg = "linear-gradient(135deg,#22d3ee22 0%,#0e749222 100%)", GameBorder = "rgba(34,211,238,0.4)",
+                Desc = "Sualla bağlı əlavə kiçik ipucu göstərir və bir yanlış variantı işarələyir."
+            },
+            new()
+            {
+                Name = "Cavabı Dəyiş", Emoji = "🔁", Price = 65, Type = "Joker", ItemType = "answer_change",
+                Rarity = "Rare", Game = "Quiz", GameColor = "#a3e635",
+                GameBg = "linear-gradient(135deg,#a3e63522 0%,#3f621222 100%)", GameBorder = "rgba(163,230,53,0.4)",
+                Desc = "Yanlış cavabdan sonra can itirmədən cavabınızı bir dəfə dəyişməyə imkan verir."
+            },
 
             // ── Avatars (single-owned) ──
             new()

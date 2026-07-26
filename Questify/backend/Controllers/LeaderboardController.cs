@@ -16,11 +16,14 @@ public class LeaderboardController : ControllerBase
         _context = context;
     }
 
+    // Top 50 by Xp descending — the frontend's global leaderboard tab.
     [HttpGet]
     public async Task<IActionResult> GetLeaderboard()
     {
         var users = await _context.Users
             .Where(u => u.Role != "Admin")
+            .OrderByDescending(u => u.Xp)
+            .Take(50)
             .Select(u => new LeaderboardEntryDto
             {
                 Id = u.Id,
@@ -30,7 +33,9 @@ public class LeaderboardController : ControllerBase
                 AvatarUrl = u.AvatarUrl,
                 EquippedFrameId = u.EquippedFrameId,
                 EquippedThemeId = u.EquippedThemeId,
-                Role = u.Role
+                Role = u.Role,
+                Xp = u.Xp,
+                CurrentStreak = u.CurrentStreak
             })
             .ToListAsync();
 

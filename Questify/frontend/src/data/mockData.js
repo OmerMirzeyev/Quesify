@@ -355,6 +355,9 @@ export const shopItems = [
   { id: 2002, name: 'Kod Ninzya Nişanı', emoji: '🥷', type: 'Nişan', itemType: 'badge', price: 100, rarity: 'Rare', game: 'Questify', gameColor: '#94a3b8', gameBg: 'linear-gradient(135deg, #94a3b822 0%, #47556922 100%)', gameBorder: 'rgba(148,163,184,0.35)', desc: 'Gölgede ilerleyen kod ustası.' },
   { id: 5, name: 'Can İksiri', emoji: '💖', type: 'İksir', itemType: 'potion_heart', price: 50, rarity: 'Common', game: 'RPG', gameColor: '#ef4444', gameBg: 'linear-gradient(135deg, #ef444422 0%, #7f1d1d22 100%)', gameBorder: 'rgba(239,68,68,0.35)', desc: '1 Can hakkı geri. Həftəlik: 1 dəfə.' },
   { id: 6, name: '50/50 Joker', emoji: '🃏', type: 'Joker', itemType: 'joker_5050', price: 75, rarity: 'Rare', game: 'Quiz', gameColor: '#f59e0b', gameBg: 'linear-gradient(135deg, #f59e0b22 0%, #78350f22 100%)', gameBorder: 'rgba(245,158,11,0.4)', desc: '2 yanlış variantı silir.' },
+  { id: 8, name: 'Freeze Time', emoji: '⏱️', type: 'Joker', itemType: 'time_freeze', price: 60, rarity: 'Rare', game: 'Quiz', gameColor: '#38bdf8', gameBg: 'linear-gradient(135deg, #38bdf822 0%, #0c4a6e22 100%)', gameBorder: 'rgba(56,189,248,0.4)', desc: 'Sual taymerini bir neçə saniyəlik dayandırır.' },
+  { id: 9, name: 'Hint Kartı', emoji: '🔍', type: 'Joker', itemType: 'hint_card', price: 45, rarity: 'Common', game: 'Quiz', gameColor: '#22d3ee', gameBg: 'linear-gradient(135deg, #22d3ee22 0%, #0e749222 100%)', gameBorder: 'rgba(34,211,238,0.4)', desc: 'Əlavə kiçik ipucu göstərir və bir yanlış variantı işarələyir.' },
+  { id: 10, name: 'Cavabı Dəyiş', emoji: '🔁', type: 'Joker', itemType: 'answer_change', price: 65, rarity: 'Rare', game: 'Quiz', gameColor: '#a3e635', gameBg: 'linear-gradient(135deg, #a3e63522 0%, #3f621222 100%)', gameBorder: 'rgba(163,230,53,0.4)', desc: 'Yanlış cavabdan sonra can itirmədən cavabınızı bir dəfə dəyişməyə imkan verir.' },
 ];
 
 export const spinRewards = [

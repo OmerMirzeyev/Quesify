@@ -15,6 +15,9 @@ public class AppDbContext : DbContext
     public DbSet<UserMapProgress> UserMapProgress => Set<UserMapProgress>();
     public DbSet<ModerationAction> ModerationActions => Set<ModerationAction>();
     public DbSet<LoginOtp> LoginOtps => Set<LoginOtp>();
+    public DbSet<Course> Courses => Set<Course>();
+    public DbSet<Badge> Badges => Set<Badge>();
+    public DbSet<UserBadge> UserBadges => Set<UserBadge>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -54,5 +57,25 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<LoginOtp>()
             .HasIndex(o => o.ChallengeId);
+
+        modelBuilder.Entity<UserBadge>()
+            .HasOne(ub => ub.User)
+            .WithMany()
+            .HasForeignKey(ub => ub.UserId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<UserBadge>()
+            .HasOne(ub => ub.Badge)
+            .WithMany()
+            .HasForeignKey(ub => ub.BadgeId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<UserBadge>()
+            .HasIndex(ub => new { ub.UserId, ub.BadgeId })
+            .IsUnique();
+
+        modelBuilder.Entity<Badge>()
+            .HasIndex(b => b.Code)
+            .IsUnique();
     }
 }

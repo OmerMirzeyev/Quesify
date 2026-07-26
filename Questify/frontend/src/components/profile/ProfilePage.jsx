@@ -10,7 +10,7 @@ export default function ProfilePage() {
     updateUsername,
     customProfileImage, setCustomProfileImage, clearCustomProfilePhoto,
     failedQuestions, solveFailedQuestion, achievements,
-    dynamicShopItems,
+    dynamicShopItems, userBadges, streak,
   } = useApp();
 
   // Prefer the backend-loaded catalog (same source GoldShop/equipAvatar use) so avatars added
@@ -535,6 +535,51 @@ export default function ProfilePage() {
               </div>
             ))}
           </div>
+        </div>
+      </div>
+
+      {/* ── SECTION F — My Badges (backend-earned achievements) ── */}
+      <div className="card" style={{ position: 'relative', overflow: 'hidden' }}>
+        <div style={{
+          position: 'absolute', inset: 0,
+          background: 'radial-gradient(circle at 10% 10%, rgba(239, 68, 68, 0.05) 0%, transparent 60%)',
+          pointerEvents: 'none',
+        }} />
+        <div style={{ position: 'relative', zIndex: 1 }}>
+          <div className="section-header" style={{ marginBottom: '1.25rem' }}>
+            <div>
+              <div className="section-title">{t('myBadgesTitle')}</div>
+              <div className="section-subtitle">
+                {t('myBadgesSubtitle')} · {t('currentStreakLabel')}: <strong>{streak?.current ?? 0} 🔥</strong>
+              </div>
+            </div>
+          </div>
+
+          {userBadges.length === 0 ? (
+            <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)', background: 'var(--bg-input)', borderRadius: '8px', border: '1px dashed var(--border-color)' }}>
+              <div style={{ fontSize: '2.5rem', marginBottom: '0.5rem' }}>🏅</div>
+              <p style={{ margin: 0, fontSize: '0.88rem', fontWeight: 600 }}>{t('noBadgesYet')}</p>
+            </div>
+          ) : (
+            <div className="achievements-badge-grid">
+              {userBadges.map((badge) => (
+                <div
+                  key={badge.code}
+                  className="achievement-badge-card unlocked"
+                  title={badge.description}
+                >
+                  <div className="achievement-badge-icon">{badge.emoji}</div>
+                  <div className="achievement-badge-content">
+                    <div className="achievement-badge-title">{badge.name}</div>
+                    <div className="achievement-badge-desc">{badge.description}</div>
+                  </div>
+                  <div className="achievement-badge-status-label">
+                    <span className="badge badge-easy" style={{ fontSize: '0.65rem' }}>✓ {new Date(badge.earnedAt).toLocaleDateString()}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

@@ -12,4 +12,6 @@ public class LeaderboardEntryDto
     public int? EquippedFrameId { get; set; }
     public int? EquippedThemeId { get; set; }
     public string Role { get; set; } = string.Empty;
+    public int Xp { get; set; }
+    public int CurrentStreak { get; set; }
 }

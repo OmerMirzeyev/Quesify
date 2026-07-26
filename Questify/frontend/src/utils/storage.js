@@ -154,6 +154,9 @@ export const DEFAULT_USER_PROGRESS = {
     role: 'İstifadəçi',
     hearts: 3,
     jokers: 0,
+    hintCards: 0,
+    answerChanges: 0,
+    timeFreezes: 0,
     streak: 0,
   },
   welcomeBonusClaimed: false,   // → UserProgress.WelcomeBonusClaimed (bit/boolean)
@@ -215,7 +218,7 @@ export function saveStoredQuests(quests) {
   localStorage.setItem(STORAGE_KEYS.QUESTS, JSON.stringify(quests));
 }
 
-export function registerUser({ firstName, lastName, email, password, emoji, avatarUrl }) {
+export function registerUser({ firstName, lastName, email, password, emoji, avatarUrl, role }) {
   const normalizedEmail = email.trim().toLowerCase();
   const users = getRegisteredUsers();
 
@@ -228,7 +231,15 @@ export function registerUser({ firstName, lastName, email, password, emoji, avat
   const trimmedLast = lastName.trim();
   const displayName = `${trimmedFirst} ${trimmedLast}`.trim();
 
-  const isAdmin = normalizedEmail === 'admin@questify.az' || normalizedEmail === 'admin@gmail.com';
+  // The backend is the source of truth for role (JWT `role` claim) — an explicit `role` passed
+  // in (from the real /api/auth/login response, via completeLogin) always wins. The hardcoded
+  // email checks are only a fallback for legacy/offline-only registration paths that never talk
+  // to the backend. `admin@questify.com` is the real seeded backend admin (see backend/Program.cs);
+  // the other two are older client-only demo bypasses kept for backwards compatibility.
+  const isAdmin = isAdminRole(role) ||
+    normalizedEmail === 'admin@questify.com' ||
+    normalizedEmail === 'admin@questify.az' ||
+    normalizedEmail === 'admin@gmail.com';
   const chosenEmoji = emoji || '🎮';
 
   const newUser = {
@@ -387,12 +398,18 @@ export function buildProgressSnapshot(state) {
   };
 }
 
+// Defense-in-depth alongside the role check below: known admin accounts are excluded by email
+// too, so a stale/desynced local `role` cache can never leak an admin into a leaderboard row.
+const KNOWN_ADMIN_EMAILS = ['admin@questify.com', 'admin@questify.az', 'admin@gmail.com'];
+const isExcludedFromLeaderboard = (reg) =>
+  isAdminRole(reg.role) || KNOWN_ADMIN_EMAILS.includes(reg.email);
+
 /** Leaderboard row for a specific language track → mimics SQL: SELECT ... FROM TrackStats JOIN Users WHERE Track = @track */
 export function getLeaderboardForTrack(track, currentSessionEmail = null) {
   const normalizedSession = currentSessionEmail?.toLowerCase() ?? null;
 
   return getRegisteredUsers()
-    .filter((reg) => reg.role !== 'Admin')   // exclude admin accounts
+    .filter((reg) => !isExcludedFromLeaderboard(reg))   // exclude admin accounts
     .map((reg) => {
     const progress = getUserProgress(reg.email);
     const stats = progress.trackStats?.[track] || { xp: 0, gold: 0 };
@@ -421,7 +438,7 @@ export function getGlobalLeaderboard(currentSessionEmail = null) {
   const normalizedSession = currentSessionEmail?.toLowerCase() ?? null;
 
   return getRegisteredUsers()
-    .filter((reg) => reg.role !== 'Admin')   // exclude admin accounts
+    .filter((reg) => !isExcludedFromLeaderboard(reg))   // exclude admin accounts
     .map((reg) => {
     const progress = getUserProgress(reg.email);
     const trackStats = progress.trackStats || EMPTY_TRACK_STATS();
