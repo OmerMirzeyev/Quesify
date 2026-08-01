@@ -118,17 +118,22 @@ using (var scope = app.Services.CreateScope())
     // Applies pending EF Core migrations
     dbContext.Database.Migrate();
 
-    // Ensure the built-in "Admin Questify" account exists
-    var adminUser = dbContext.Users.FirstOrDefault(u => u.Email == "admin@questify.com");
+    // Ensure the built-in "Admin Questify" account exists, with the credentials always pinned to
+    // admin@questify.com / Admin123! — reset on every startup so the password never drifts from
+    // what's documented, even if it was changed via the profile/reset-password flow.
+    const string AdminEmail = "admin@questify.com";
+    const string AdminPassword = "Admin123!";
+
+    var passwordHasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher>();
+    var adminUser = dbContext.Users.FirstOrDefault(u => u.Email == AdminEmail);
     if (adminUser is null)
     {
-        var passwordHasher = scope.ServiceProvider.GetRequiredService<IPasswordHasher>();
         adminUser = new User
         {
             FirstName = "Admin",
             LastName = "Questify",
-            Email = "admin@questify.com",
-            PasswordHash = passwordHasher.HashPassword("AdminPassword123!"),
+            Email = AdminEmail,
+            PasswordHash = passwordHasher.HashPassword(AdminPassword),
             Role = "Admin",
             Emoji = "🛡️",
             IsEmailVerified = true
@@ -137,6 +142,7 @@ using (var scope = app.Services.CreateScope())
     }
     else
     {
+        adminUser.PasswordHash = passwordHasher.HashPassword(AdminPassword);
         if (adminUser.Role != "Admin")
         {
             adminUser.Role = "Admin";

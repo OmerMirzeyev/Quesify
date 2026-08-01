@@ -5,7 +5,7 @@ import MainApp from './components/MainApp';
 import { isAppAdmin } from './utils/storage';
 
 function AppContent() {
-  const { isLoggedIn, isHydrated, user, currentTab, setCurrentTab, userRole, isBanned } = useApp();
+  const { isLoggedIn, isHydrated, currentTab, setCurrentTab, userRole, isBanned } = useApp();
   const isAdmin = isAppAdmin(userRole);
 
   // Kick demoted admins off the Admin panel immediately

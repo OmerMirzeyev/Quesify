@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Eye, EyeOff, ShieldCheck } from 'lucide-react';
+import { Eye, EyeOff } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { apiFetch } from '../../utils/api';
 import {
@@ -488,7 +488,7 @@ export default function AuthPage() {
       setFpCode('');
       setFpExpiresAt(Date.now() + OTP_TTL_MS);
       setFpView('code');
-    } catch (err) {
+    } catch {
       setFpError(t('errServerUnreachable'));
     } finally {
       setFpLoading(false);
@@ -564,7 +564,7 @@ export default function AuthPage() {
         closeForgotModal();
         setSuccessMsg(t('fpSuccessLoginNow'));
       }, 1600);
-    } catch (err) {
+    } catch {
       setFpError(t('errServerUnreachable'));
     } finally {
       setFpLoading(false);

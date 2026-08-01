@@ -78,7 +78,7 @@ const TRACK_TABS = [
 ];
 
 export default function Leaderboard() {
-  const { getLeaderboard, user, t, customProfileImage, trackStats, sessionEmail } = useApp();
+  const { getLeaderboard, user, t, customProfileImage, trackStats } = useApp();
   const [activeTrack, setActiveTrack] = useState('Global');
   const [weeklyRemaining, setWeeklyRemaining] = useState(getWeeklyResetRemainingMs());
 

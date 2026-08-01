@@ -5,7 +5,7 @@ const QUESTION_TIME_SECONDS = 45;
 const TIME_FREEZE_BONUS_SECONDS = 20;
 
 export default function QuestModal({ quest, onClose }) {
-  const { completeQuest, completedQuests, user, deductHeart, useJoker, useTimeFreeze, useHintCard, useAnswerChange, t, activeProgrammingLanguage, addFailedQuestion, triggerAIExplanation } = useApp();
+  const { completeQuest, completedQuests, user, deductHeart, spendJoker, spendTimeFreeze, spendHintCard, spendAnswerChange, t, activeProgrammingLanguage, addFailedQuestion, triggerAIExplanation } = useApp();
 
   const [currentQIdx, setCurrentQIdx] = useState(0);
   const [selectedOption, setSelectedOption] = useState(null);
@@ -18,7 +18,9 @@ export default function QuestModal({ quest, onClose }) {
   const [timeLeft, setTimeLeft] = useState(QUESTION_TIME_SECONDS);
   const [answerChangeUsed, setAnswerChangeUsed] = useState(false); // once per question
 
-  if (!quest) return null;
+  // QuestsGrid only ever mounts this component as `{selectedQuest && <QuestModal ... />}`, so
+  // `quest` is guaranteed non-null for the component's entire lifetime — no null-guard needed
+  // here (an early return before the hooks below would violate the Rules of Hooks).
 
   const isAlreadyCompleted = (completedQuests[activeProgrammingLanguage] || []).includes(quest.id);
 
@@ -118,7 +120,7 @@ export default function QuestModal({ quest, onClose }) {
     const shuffled = incorrectIndices.sort(() => 0.5 - Math.random());
     const toEliminate = shuffled.slice(0, 2);
 
-    if (useJoker()) {
+    if (spendJoker()) {
       setEliminatedOptions(toEliminate);
       if (toEliminate.includes(selectedOption)) {
         setSelectedOption(null); // Deselect if eliminated
@@ -134,7 +136,7 @@ export default function QuestModal({ quest, onClose }) {
       .filter((idx) => idx !== currentChallenge.correctIndex && !eliminatedOptions.includes(idx));
     if (incorrectIndices.length === 0) return;
     const pick = incorrectIndices[Math.floor(Math.random() * incorrectIndices.length)];
-    if (useHintCard()) {
+    if (spendHintCard()) {
       setFlaggedOption(pick);
       setShowHint(true);
     }
@@ -143,7 +145,7 @@ export default function QuestModal({ quest, onClose }) {
   // Freeze Time — spends a charge for extra time on the current question's clock.
   const handleFreezeClick = () => {
     if (checked || isAlreadyCompleted) return;
-    if (useTimeFreeze()) {
+    if (spendTimeFreeze()) {
       setTimeLeft((prev) => prev + TIME_FREEZE_BONUS_SECONDS);
     }
   };
@@ -151,7 +153,7 @@ export default function QuestModal({ quest, onClose }) {
   // Answer Change — after a wrong check, refund the heart just lost and let the user retry once.
   const handleAnswerChangeClick = () => {
     if (!checked || isCorrect || isAlreadyCompleted || answerChangeUsed) return;
-    if (useAnswerChange()) {
+    if (spendAnswerChange()) {
       setAnswerChangeUsed(true);
       setChecked(false);
       setSelectedOption(null);

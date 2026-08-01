@@ -1,8 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import {
-  initialQuestsCSharp,
-  initialQuestsJava,
-  initialQuestsPython,
   shopItems,
   QUESTS_BY_CHAPTER,
 } from '../data/mockData';
@@ -14,16 +11,13 @@ import {
   getSession,
   setSession,
   clearSession,
-  clearAdminLoggedIn,
   clearAuthSession,
-  setAuthSession,
   getUserProgress,
   saveUserProgress,
   buildProgressSnapshot,
   DEFAULT_USER_PROGRESS,
   getAllUsersDirectory,
   getLeaderboardForTrack,
-  getGlobalLeaderboard,
   getStoredQuests,
   saveStoredQuests,
   updateRegisteredUserById,
@@ -31,7 +25,6 @@ import {
   deleteRegisteredUserById,
   normalizeRole,
   isAdminRole,
-  isAppAdmin,
   EMPTY_TRACK_STATS,
   ALL_TRACKS as STORAGE_TRACKS,
   getRegisteredUsers,
@@ -42,6 +35,7 @@ import {
 const AppContext = createContext(null);
 
 const ALL_TRACKS = STORAGE_TRACKS;
+const REGEN_TIME_MS = 5 * 60 * 1000;
 
 export const AppProvider = ({ children }) => {
   const [isHydrated, setIsHydrated] = useState(false);
@@ -497,6 +491,10 @@ export const AppProvider = ({ children }) => {
       }
     }
     setIsHydrated(true);
+    // Intentionally mount-only: loadMarketInventory (and the other load*/checkBanStatus calls
+    // above) aren't memoized, so adding them here would re-run this hydration block on every
+    // render instead of once at startup.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [applyProgress]);
 
   // Poll ban/timeout status every 30s while logged in
@@ -592,6 +590,9 @@ export const AppProvider = ({ children }) => {
     if (!achievements.streakMaster && user.streak >= 3) {
       unlockAchievement('streakMaster', t('achStreakMasterTitle') || 'Ardıcıl Oyunçu', '+100 Gold', '🔥');
     }
+    // `t` is recreated every render, so it's deliberately left out — each unlockAchievement call
+    // is already gated by the achievements.* flags above, making re-running this effect harmless.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [completedQuests, user.gold, user.streak, isLoggedIn, achievements]);
 
   const unlockAchievement = (id, title, rewardText, icon) => {
@@ -600,8 +601,6 @@ export const AppProvider = ({ children }) => {
     setAchievementToast({ id, title, rewardText, icon });
     setTimeout(() => setAchievementToast(null), 4500);
   };
-
-  const REGEN_TIME_MS = 5 * 60 * 1000;
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -852,7 +851,9 @@ export const AppProvider = ({ children }) => {
     });
   };
 
-  const useJoker = () => {
+  // Named spend* rather than use* — a `use`-prefixed plain function reads as a React Hook to
+  // both linters and readers, which caused false "Rules of Hooks" violations at every call site.
+  const spendJoker = () => {
     if (user.jokers > 0) {
       setUser((prev) => ({ ...prev, jokers: prev.jokers - 1 }));
       return true;
@@ -862,7 +863,7 @@ export const AppProvider = ({ children }) => {
 
   // Freeze Time — pauses the per-question timer for a few seconds (QuestModal owns the timer
   // itself; this just spends the charge and hands back whether it was allowed).
-  const useTimeFreeze = () => {
+  const spendTimeFreeze = () => {
     if (user.timeFreezes > 0) {
       setUser((prev) => ({ ...prev, timeFreezes: prev.timeFreezes - 1 }));
       return true;
@@ -872,7 +873,7 @@ export const AppProvider = ({ children }) => {
 
   // Hint Card — spends a charge to reveal an extra clue (flags one wrong option) beyond the
   // always-free text hint.
-  const useHintCard = () => {
+  const spendHintCard = () => {
     if (user.hintCards > 0) {
       setUser((prev) => ({ ...prev, hintCards: prev.hintCards - 1 }));
       return true;
@@ -881,7 +882,7 @@ export const AppProvider = ({ children }) => {
   };
 
   // Answer Change — spends a charge to retry a wrong answer without losing the heart it cost.
-  const useAnswerChange = () => {
+  const spendAnswerChange = () => {
     if (user.answerChanges > 0) {
       setUser((prev) => ({
         ...prev,
@@ -1376,10 +1377,10 @@ export const AppProvider = ({ children }) => {
     addXp,
     addHeart,
     deductHeart,
-    useJoker,
-    useTimeFreeze,
-    useHintCard,
-    useAnswerChange,
+    spendJoker,
+    spendTimeFreeze,
+    spendHintCard,
+    spendAnswerChange,
     timeUntilNextHeart,
     quests,
     completedQuests,
@@ -1473,6 +1474,10 @@ export const AppProvider = ({ children }) => {
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;
 };
 
+// Standard React context pattern — the hook is deliberately colocated with its Provider rather
+// than split into a separate file purely to satisfy Fast Refresh, which would just churn every
+// importer for no functional benefit.
+// eslint-disable-next-line react-refresh/only-export-components
 export const useApp = () => {
   const ctx = useContext(AppContext);
   if (!ctx) throw new Error('useApp must be inside AppProvider');

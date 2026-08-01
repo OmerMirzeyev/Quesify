@@ -396,7 +396,7 @@ export default function AdminPanel() {
                 Yalnız Register ekranından yaradılan hesablar burada görünür.
               </p>
             </div>
-          ) : (
+          ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>

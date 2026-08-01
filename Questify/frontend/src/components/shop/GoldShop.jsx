@@ -30,12 +30,12 @@ const defaultNewItem = {
 
 export default function GoldShop() {
   const {
-    purchasedItems, buyItem, t, heartPotionPurchasedAt,
+    buyItem, t, heartPotionPurchasedAt,
     dynamicShopItems, adminAddShopItem, adminDeleteShopItem, adminSetShopItemStock,
     coins, hasUnlimitedCoins, marketInventory, equipMarketItem, isAdmin,
   } = useApp();
 
-  const [tick, setTick] = useState(0);
+  const [, setTick] = useState(0);
   const [showAddModal, setShowAddModal] = useState(false);
   const [newItem, setNewItem] = useState(defaultNewItem);
   const [deleteConfirmId, setDeleteConfirmId] = useState(null);

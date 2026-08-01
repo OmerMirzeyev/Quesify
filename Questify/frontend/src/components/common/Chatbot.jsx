@@ -61,7 +61,7 @@ Maraqlı sualdır! Mentor olaraq sizə tövsiyəm, bu mövzunu praktiki kod yaza
 }
 
 export default function Chatbot() {
-  const { isChatbotOpen, setIsChatbotOpen, chatbotMessages, setChatbotMessages, chatbotAlert } = useApp();
+  const { isChatbotOpen, setIsChatbotOpen, chatbotMessages, setChatbotMessages, chatbotAlert, activeProgrammingLanguage } = useApp();
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const chatEndRef = useRef(null);
@@ -92,7 +92,7 @@ export default function Chatbot() {
       const { ok, data } = await apiFetch('/api/ai/chat', {
         method: 'POST',
         auth: true,
-        body: { messages: history },
+        body: { messages: history, course: activeProgrammingLanguage },
       });
 
       const reply = ok && data?.reply ? data.reply : getFallbackResponse(query);
@@ -180,7 +180,11 @@ export default function Chatbot() {
               <span style={{ fontSize: '1.4rem' }}>🤖</span>
               <div>
                 <div style={{ fontWeight: 800, fontSize: '0.88rem', letterSpacing: '0.5px' }}>AI MENTOR</div>
-                <div style={{ fontSize: '0.65rem', opacity: 0.85, fontWeight: 600 }}>Həmişə aktiv · Proqramlaşdırma Məşqçisi</div>
+                <div style={{ fontSize: '0.65rem', opacity: 0.85, fontWeight: 600 }}>
+                  {activeProgrammingLanguage
+                    ? `Həmişə aktiv · ${activeProgrammingLanguage} Questi üzrə Məşqçin`
+                    : 'Həmişə aktiv · Proqramlaşdırma Məşqçisi'}
+                </div>
               </div>
             </div>
             <button

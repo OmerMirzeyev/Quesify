@@ -14,7 +14,6 @@ export default function FriendsPage() {
     rejectFriendRequest,
     sendChatMessage,
     markChatAsRead,
-    t
   } = useApp();
 
   const [searchQuery, setSearchQuery] = useState('');

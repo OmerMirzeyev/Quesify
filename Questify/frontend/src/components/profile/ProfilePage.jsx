@@ -6,7 +6,7 @@ export default function ProfilePage() {
   const {
     user, t, setCurrentTab,
     ownedAvatarIds, activeAvatarId, equipAvatar,
-    activeAvatarUrl, setActiveAvatarUrl,
+    activeAvatarUrl,
     updateUsername,
     customProfileImage, setCustomProfileImage, clearCustomProfilePhoto,
     failedQuestions, solveFailedQuestion, achievements,

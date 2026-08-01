@@ -144,7 +144,6 @@ export default function QuestsGrid() {
     activeProgrammingLanguage,
     claimedChests,
     claimTreasureChest,
-    user,
     mapProgress,
     isAdmin,
     t,
@@ -159,10 +158,22 @@ export default function QuestsGrid() {
   const cloudLayerRef = useRef(null);
   const treeLayerRef = useRef(null);
 
-  const activeCompleted = completedQuests[activeProgrammingLanguage] || [];
-  const chapters = QUESTS_BY_CHAPTER[activeProgrammingLanguage] || [];
+  // Memoized (rather than a plain `|| []` fallback) so the array reference stays stable across
+  // renders when the underlying data hasn't changed — the useMemo/useCallback hooks below key
+  // off these two and would otherwise recompute on every render, defeating their purpose.
+  const activeCompleted = useMemo(
+    () => completedQuests[activeProgrammingLanguage] || [],
+    [completedQuests, activeProgrammingLanguage]
+  );
+  const chapters = useMemo(
+    () => QUESTS_BY_CHAPTER[activeProgrammingLanguage] || [],
+    [activeProgrammingLanguage]
+  );
   const chaptersMeta = CHAPTER_META[activeProgrammingLanguage] || [];
-  const currentChapterQuests = chapters[selectedChapterIdx] || [];
+  const currentChapterQuests = useMemo(
+    () => chapters[selectedChapterIdx] || [],
+    [chapters, selectedChapterIdx]
+  );
   const currentChapterMeta = chaptersMeta[selectedChapterIdx] || {};
 
   const ch1QuestIds = chapters[0]?.map((q) => q.id) || [];
