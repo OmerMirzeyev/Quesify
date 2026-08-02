@@ -1,10 +1,14 @@
 import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+// Aliased — AppContext already has its own `const [toast, setToast] = useState(...)` (the
+// existing bespoke toast popup, driven by showToast()) which would otherwise shadow this import.
+import { toast as sonnerToast } from 'sonner';
 import {
   shopItems,
   QUESTS_BY_CHAPTER,
 } from '../data/mockData';
 import { translations } from '../i18n/translations';
 import { apiFetch } from '../utils/api';
+import { connectNotificationHub, disconnectNotificationHub } from '../utils/signalr';
 import {
   authenticateUser,
   registerUser,
@@ -29,6 +33,7 @@ import {
   ALL_TRACKS as STORAGE_TRACKS,
   getRegisteredUsers,
   updateRegisteredUserByEmail,
+  getAuthToken,
   getAuthTokenExpiration,
 } from '../utils/storage';
 
@@ -377,6 +382,25 @@ export const AppProvider = ({ children }) => {
         showToast(`X\u0259ta: ${status}`, '\u274c');
       }
     } catch { showToast('\u018flaq\u0259 x\u0259tas\u0131', '\u274c'); }
+  };
+
+  // Pushes a real-time toast (SignalR NotificationHub) to every currently-connected client \u2014
+  // doesn't touch the DB, purely a live broadcast for whoever's online right now.
+  const adminBroadcast = async (message) => {
+    const trimmed = message.trim();
+    if (!trimmed) return false;
+    try {
+      const { ok, status } = await apiFetch(`/api/admin/broadcast?message=${encodeURIComponent(trimmed)}`, { method: 'POST', auth: true });
+      if (ok) {
+        showToast('Bildiri\u015f g\u00f6nd\u0259rildi!', '\ud83d\udce3');
+        return true;
+      }
+      showToast(`X\u0259ta: ${status}`, '\u274c');
+      return false;
+    } catch {
+      showToast('\u018flaq\u0259 x\u0259tas\u0131', '\u274c');
+      return false;
+    }
   };
 
   // Admin overrides: coins / unlimited coins / role / delete user \u2014 real backend calls,
@@ -1067,6 +1091,27 @@ export const AppProvider = ({ children }) => {
     setNotifications([]);
   }, []);
 
+  // Real-time push channel (backend/Hubs/NotificationHub.cs) — connects once per login session
+  // and fans incoming server events out to both the toast popup and the existing notification
+  // bell, so admin moderation actions / platform announcements show up live without a refresh.
+  useEffect(() => {
+    if (!isLoggedIn) {
+      disconnectNotificationHub();
+      return undefined;
+    }
+
+    const token = getAuthToken();
+    if (!token) return undefined;
+
+    connectNotificationHub(token, (payload) => {
+      const icon = payload.type === 'moderation' ? '🛡️' : payload.type === 'platform_update' ? '📣' : '🔔';
+      sonnerToast(payload.message, { icon });
+      pushNotification(payload.type, payload.message, icon);
+    });
+
+    return () => disconnectNotificationHub();
+  }, [isLoggedIn, pushNotification]);
+
   // Global quest addition + storage write
   const addQuest = (newQuest, targetLevelId, targetLanguage) => {
     setQuests((prev) => {
@@ -1213,12 +1258,15 @@ export const AppProvider = ({ children }) => {
       return false;
     }
 
-    // Add a pending request to current user and target user's storage
+    // Add a pending request to current user and target user's storage. fromEmoji/fromAvatarUrl
+    // are kept separate (not one field holding either) — mixing them meant a Google/custom photo
+    // URL landed in fromEmoji and got rendered as raw text instead of an <img>.
     const newRequest = {
       id: Date.now(),
       fromEmail: sessionEmail,
       fromUsername: user.username,
-      fromEmoji: activeAvatarUrl || user.emoji,
+      fromEmoji: user.emoji,
+      fromAvatarUrl: activeAvatarUrl || null,
       toEmail: target,
       status: 'pending',
       timestamp: Date.now()
@@ -1405,6 +1453,7 @@ export const AppProvider = ({ children }) => {
     adminUnbanUser,
     adminTimeoutUser,
     adminRemoveTimeout,
+    adminBroadcast,
     customProfileImage,
     setCustomProfileImage: setCustomProfilePhoto,
     clearCustomProfilePhoto,

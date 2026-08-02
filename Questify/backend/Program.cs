@@ -1,6 +1,7 @@
 using System.Text;
 using backend.Data;
 using backend.Filters;
+using backend.Hubs;
 using backend.Models;
 using backend.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -31,6 +32,8 @@ builder.Services.AddSwaggerGen();
 builder.Services.AddSingleton<IPasswordHasher, PasswordHasher>();
 builder.Services.AddScoped<IEmailService, EmailService>();
 builder.Services.AddScoped<IAiService, AiService>();
+builder.Services.AddScoped<INotificationService, NotificationService>();
+builder.Services.AddSignalR();
 
 // Used by AuthController to verify Google Sign-In ID tokens against Google's tokeninfo endpoint.
 builder.Services.AddHttpClient();
@@ -66,6 +69,24 @@ builder.Services
             ValidAudience = jwtSettings["Audience"],
             IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(signingKey)),
             ClockSkew = TimeSpan.FromMinutes(1)
+        };
+
+        // Browsers can't attach an Authorization header to the WebSocket handshake SignalR's
+        // client uses, so its accessTokenFactory instead appends the JWT as ?access_token=...
+        // (see src/utils/signalr.js) — only honored under /hubs, so normal REST calls still must
+        // use the Authorization header.
+        options.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = context =>
+            {
+                var accessToken = context.Request.Query["access_token"];
+                if (!string.IsNullOrEmpty(accessToken) &&
+                    context.HttpContext.Request.Path.StartsWithSegments("/hubs"))
+                {
+                    context.Token = accessToken;
+                }
+                return Task.CompletedTask;
+            }
         };
     });
 
@@ -164,5 +185,6 @@ app.UseCors("Default");
 app.UseAuthentication();
 app.UseAuthorization();
 app.MapControllers();
+app.MapHub<NotificationHub>("/hubs/notifications");
 
 app.Run();

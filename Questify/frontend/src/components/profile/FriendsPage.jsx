@@ -189,35 +189,56 @@ export default function FriendsPage() {
               </div>
             ) : (
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
-                {incomingRequests.map(req => (
-                  <div key={req.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.6rem 0.8rem', background: 'rgba(34, 211, 238, 0.04)', borderRadius: '8px', border: '1px solid rgba(34, 211, 238, 0.2)' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                      <span style={{ fontSize: '1.3rem' }}>{req.fromEmoji || '🎮'}</span>
-                      <div>
-                        <div style={{ fontSize: '0.85rem', fontWeight: 700 }}>{req.fromUsername}</div>
-                        <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>{req.fromEmail}</div>
+                {incomingRequests.map(req => {
+                  // Older stored requests (pre-fix) may still have a Google/custom-photo URL
+                  // sitting in fromEmoji itself — treat anything URL-shaped as an avatar too, so
+                  // already-persisted requests self-heal instead of rendering as raw text.
+                  const avatarSrc = req.fromAvatarUrl
+                    || (typeof req.fromEmoji === 'string' && req.fromEmoji.startsWith('http') ? req.fromEmoji : null);
+                  const emoji = avatarSrc ? null : (req.fromEmoji || '🎮');
+                  return (
+                    <div key={req.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.6rem', padding: '0.6rem 0.8rem', background: 'rgba(34, 211, 238, 0.04)', borderRadius: '8px', border: '1px solid rgba(34, 211, 238, 0.2)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', minWidth: 0 }}>
+                        <div style={{
+                          width: '32px', height: '32px', borderRadius: '50%', flexShrink: 0,
+                          background: 'rgba(255,255,255,0.05)', display: 'flex',
+                          alignItems: 'center', justifyContent: 'center', fontSize: '1.3rem',
+                          overflow: 'hidden',
+                        }}>
+                          {avatarSrc
+                            ? <img src={avatarSrc} alt={req.fromUsername} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+                            : emoji}
+                        </div>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontSize: '0.85rem', fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {req.fromUsername}
+                          </div>
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                            {req.fromEmail}
+                          </div>
+                        </div>
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.3rem', flexShrink: 0 }}>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-primary"
+                          onClick={() => acceptFriendRequest(req.id)}
+                          style={{ padding: '0.2rem 0.5rem', fontSize: '0.72rem', background: 'var(--accent-green)', borderColor: 'var(--accent-green)' }}
+                        >
+                          Qəbul Et
+                        </button>
+                        <button
+                          type="button"
+                          className="btn btn-sm btn-outline"
+                          onClick={() => rejectFriendRequest(req.id)}
+                          style={{ padding: '0.2rem 0.5rem', fontSize: '0.72rem', color: 'var(--accent-red)', borderColor: 'rgba(239,68,68,0.3)' }}
+                        >
+                          Rədd Et
+                        </button>
                       </div>
                     </div>
-                    <div style={{ display: 'flex', gap: '0.3rem' }}>
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-primary"
-                        onClick={() => acceptFriendRequest(req.id)}
-                        style={{ padding: '0.2rem 0.5rem', fontSize: '0.72rem', background: 'var(--accent-green)', borderColor: 'var(--accent-green)' }}
-                      >
-                        Qəbul Et
-                      </button>
-                      <button
-                        type="button"
-                        className="btn btn-sm btn-outline"
-                        onClick={() => rejectFriendRequest(req.id)}
-                        style={{ padding: '0.2rem 0.5rem', fontSize: '0.72rem', color: 'var(--accent-red)', borderColor: 'rgba(239,68,68,0.3)' }}
-                      >
-                        Rədd Et
-                      </button>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
 

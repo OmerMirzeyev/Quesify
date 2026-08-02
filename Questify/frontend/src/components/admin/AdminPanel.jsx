@@ -144,11 +144,24 @@ const GENERATED_AI_QUESTIONS = {
 
 export default function AdminPanel() {
   const { usersList, updateUserInfo, deleteUser, addQuest, quests, t,
-          adminBanUser, adminUnbanUser, adminTimeoutUser, adminRemoveTimeout,
+          adminBanUser, adminUnbanUser, adminTimeoutUser, adminRemoveTimeout, adminBroadcast,
           dynamicShopItems, adminAddShopItem, adminUpdateShopItem, adminDeleteShopItem, adminSetShopItemStock } = useApp();
   const [activeAdminTab, setActiveAdminTab] = useState('users');
   const [timeoutMinutes, setTimeoutMinutes] = useState(10);
   const [timeoutingUserId, setTimeoutingUserId] = useState(null);
+
+  // Platform-wide real-time announcement (SignalR) — sent live, nothing persisted.
+  const [broadcastMessage, setBroadcastMessage] = useState('');
+  const [broadcastSending, setBroadcastSending] = useState(false);
+
+  const handleBroadcast = async (e) => {
+    e.preventDefault();
+    if (!broadcastMessage.trim() || broadcastSending) return;
+    setBroadcastSending(true);
+    const success = await adminBroadcast(broadcastMessage);
+    setBroadcastSending(false);
+    if (success) setBroadcastMessage('');
+  };
 
   // Shop management tab state
   const [editingShopId, setEditingShopId] = useState(null); // row currently in inline-edit mode
@@ -361,6 +374,31 @@ export default function AdminPanel() {
           <div className="section-subtitle">{t('adminSubtitle')}</div>
         </div>
       </div>
+
+      {/* Real-time platform announcement — pushed live via SignalR to every connected client */}
+      <form
+        onSubmit={handleBroadcast}
+        className="card"
+        style={{ display: 'flex', gap: '0.6rem', alignItems: 'center', padding: '1rem 1.25rem', marginBottom: '1.5rem', flexWrap: 'wrap' }}
+      >
+        <span style={{ fontSize: '1.3rem' }}>📣</span>
+        <input
+          type="text"
+          className="input-field"
+          placeholder="Bütün istifadəçilərə canlı bildiriş göndərin..."
+          value={broadcastMessage}
+          onChange={(e) => setBroadcastMessage(e.target.value)}
+          disabled={broadcastSending}
+          style={{ flex: '1 1 260px' }}
+        />
+        <button
+          type="submit"
+          className="btn btn-primary btn-sm"
+          disabled={!broadcastMessage.trim() || broadcastSending}
+        >
+          {broadcastSending ? 'Göndərilir...' : 'Yayımla'}
+        </button>
+      </form>
 
       <div style={{ display: 'flex', gap: '1rem', borderBottom: '1px solid var(--border-color)', marginBottom: '1.5rem', paddingBottom: '0.5rem' }}>
         <button

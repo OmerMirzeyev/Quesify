@@ -427,7 +427,13 @@ export function getLeaderboardForTrack(track, currentSessionEmail = null) {
       role: reg.role,
       isCurrentUser: normalizedSession === reg.email,
     };
-  });
+  })
+    // Every registered user has a (possibly untouched) trackStats entry for every track, so
+    // without this filter every track tab listed the entire user roster — e.g. the Java tab
+    // showed all 5 registered users even though none of them had ever played Java, while the
+    // real backend-driven enrollment count on the landing page correctly read 0. Only users who
+    // actually have XP or Gold in this specific track count as "on" that track's leaderboard.
+    .filter((row) => row.xp > 0 || row.gold > 0);
 }
 
 /**

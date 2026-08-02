@@ -1376,7 +1376,11 @@ export default function AuthPage() {
       </div>
       </div>
 
-      <LandingSections onStart={() => switchMode('register')} onSelectCourse={() => switchMode('register')} />
+      <LandingSections
+        onStart={() => switchMode('register')}
+        onSelectCourse={() => switchMode('register')}
+        courseStats={courseStats}
+      />
     </div>
   );
 }

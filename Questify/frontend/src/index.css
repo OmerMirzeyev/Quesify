@@ -1247,6 +1247,13 @@ img {
   line-height: 1.55;
 }
 
+.landing-lang-students {
+  margin-top: 0.65rem;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: var(--accent-purple-light);
+}
+
 /* ── How it works grid ── */
 .landing-how-grid {
   display: grid;

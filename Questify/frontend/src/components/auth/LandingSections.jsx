@@ -55,7 +55,9 @@ function RevealSection({ id, children, style }) {
   );
 }
 
-export default function LandingSections({ onStart, onSelectCourse }) {
+const formatStudents = (n) => (typeof n === 'number' ? n.toLocaleString('en-US') : '—');
+
+export default function LandingSections({ onStart, onSelectCourse, courseStats = {} }) {
   const { t } = useApp();
   const [courses, setCourses] = useState(FALLBACK_COURSES);
 
@@ -102,6 +104,11 @@ export default function LandingSections({ onStart, onSelectCourse }) {
                 <div className="landing-lang-icon">{course.icon}</div>
                 <div className="landing-lang-name">{course.name}</div>
                 <div className="landing-lang-desc">{t(DESC_KEY_BY_SLUG[course.slug] || '')}</div>
+                {course.isAvailable && (
+                  <div className="landing-lang-students">
+                    👥 {formatStudents(courseStats[course.slug])} {t('studentsLabel')}
+                  </div>
+                )}
               </motion.div>
             ))}
           </div>

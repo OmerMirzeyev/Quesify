@@ -1,4 +1,5 @@
 import React, { useEffect } from 'react';
+import { Toaster } from 'sonner';
 import { AppProvider, useApp } from './context/AppContext';
 import AuthPage from './components/auth/AuthPage';
 import MainApp from './components/MainApp';
@@ -74,10 +75,18 @@ function AppContent() {
   return isLoggedIn ? <MainApp /> : <AuthPage />;
 }
 
+// Rendered alongside AppContent (not inside it) so the loading/banned/logged-out early returns
+// above don't need to each remember to include it — one Toaster, mounted for the app's lifetime.
+function AppToaster() {
+  const { theme } = useApp();
+  return <Toaster theme={theme === 'light' ? 'light' : 'dark'} position="top-right" richColors closeButton />;
+}
+
 export default function App() {
   return (
     <AppProvider>
       <AppContent />
+      <AppToaster />
     </AppProvider>
   );
 }

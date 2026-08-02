@@ -1,6 +1,7 @@
 using backend.Data;
 using backend.Extensions;
 using backend.Models;
+using backend.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
@@ -15,10 +16,12 @@ public class AdminController : ControllerBase
     private static readonly string[] AllowedRoles = { "Admin", "User" };
 
     private readonly AppDbContext _context;
+    private readonly INotificationService _notifications;
 
-    public AdminController(AppDbContext context)
+    public AdminController(AppDbContext context, INotificationService notifications)
     {
         _context = context;
+        _notifications = notifications;
     }
 
     [HttpGet("dashboard")]
@@ -29,6 +32,19 @@ public class AdminController : ControllerBase
             Message = "Welcome to the admin dashboard. This endpoint requires the Admin role.",
             Timestamp = DateTime.UtcNow
         });
+    }
+
+    // POST /api/admin/broadcast?message=... — pushes a real-time toast (via NotificationHub) to
+    // every currently-connected client, for platform-wide announcements (maintenance windows,
+    // new features, etc). Doesn't persist anywhere — purely a live push to whoever's online now.
+    [HttpPost("broadcast")]
+    public async Task<IActionResult> Broadcast([FromQuery] string message)
+    {
+        if (string.IsNullOrWhiteSpace(message))
+            return BadRequest(new { message = "Mesaj tələb olunur." });
+
+        await _notifications.BroadcastAsync("platform_update", message.Trim());
+        return Ok(new { message = "Bildiriş bütün onlayn istifadəçilərə göndərildi." });
     }
 
     // POST /api/admin/ban/{userId}
@@ -49,6 +65,7 @@ public class AdminController : ControllerBase
         user.TimeoutUntil = null;
         await LogModerationActionAsync(user.Id, "Ban");
         await _context.SaveChangesAsync();
+        await _notifications.NotifyUserAsync(user.Email, "moderation", "Hesabınız admin tərəfindən bloklandı.");
 
         return Ok(new { message = $"{user.Email} bloklandı.", userId = user.Id, isBanned = true });
     }
@@ -67,6 +84,7 @@ public class AdminController : ControllerBase
         user.TimeoutUntil = null;
         await LogModerationActionAsync(user.Id, "Ban");
         await _context.SaveChangesAsync();
+        await _notifications.NotifyUserAsync(user.Email, "moderation", "Hesabınız admin tərəfindən bloklandı.");
 
         return Ok(new { message = $"{user.Email} bloklandı.", userId = user.Id, isBanned = true });
     }
@@ -84,6 +102,7 @@ public class AdminController : ControllerBase
         user.IsBanned = false;
         await LogModerationActionAsync(user.Id, "Unban");
         await _context.SaveChangesAsync();
+        await _notifications.NotifyUserAsync(user.Email, "moderation", "Hesabınızın bloku admin tərəfindən açıldı. ✅");
 
         return Ok(new { message = $"{user.Email} bloku açıldı.", userId = user.Id, isBanned = false });
     }
@@ -103,6 +122,7 @@ public class AdminController : ControllerBase
         user.TimeoutUntil = DateTime.UtcNow.AddMinutes(minutes);
         await LogModerationActionAsync(user.Id, "Timeout", $"{minutes} dəqiqə");
         await _context.SaveChangesAsync();
+        await _notifications.NotifyUserAsync(user.Email, "moderation", $"Hesabınız {minutes} dəqiqəliyinə məhdudlaşdırıldı.");
 
         return Ok(new
         {
@@ -125,6 +145,7 @@ public class AdminController : ControllerBase
         user.TimeoutUntil = null;
         await LogModerationActionAsync(user.Id, "RemoveTimeout");
         await _context.SaveChangesAsync();
+        await _notifications.NotifyUserAsync(user.Email, "moderation", "Məhdudiyyətiniz admin tərəfindən götürüldü. ✅");
 
         return Ok(new { message = $"{user.Email} məhdudiyyəti götürüldü.", userId = user.Id });
     }
