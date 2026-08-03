@@ -13,8 +13,60 @@ const defaultNewShopItem = {
   gameBorder: 'rgba(139,92,246,0.4)', desc: '', stock: null,
 };
 
+// AI Question Generator topic pools, one per language — the backend takes `topic` as free text (no
+// server-side whitelist, see AdminController.GenerateQuestion) so this list only needs to stay in
+// sync with itself, not with any backend enum. `value` is what's actually sent to the AI prompt;
+// `label` is the friendlier dropdown text (with an Azerbaijani hint where useful).
+const TOPICS_BY_LANGUAGE = {
+  Java: [
+    { value: 'Basics & Syntax', label: 'Basics & Syntax (Dəyişənlər, Şərtlər, Dövrlər)', icon: '📦' },
+    { value: 'OOP Concepts', label: 'OOP Concepts (Varislik, Polimorfizm, Enkapsulyasiya)', icon: '🏛️' },
+    { value: 'Collections Framework', label: 'Java Collections Framework (List, Map, Set)', icon: '📋' },
+    { value: 'Exception Handling & File I/O', label: 'Exception Handling & File I/O', icon: '⚠️' },
+    { value: 'Multithreading & Concurrency', label: 'Multithreading & Concurrency', icon: '🧵' },
+    { value: 'Streams API & Lambda', label: 'Streams API & Lambda Expressions', icon: '🌊' },
+    { value: 'Memory Management & GC', label: 'Memory Management & Garbage Collection', icon: '🧠' },
+    { value: 'Design Patterns & Clean Code', label: 'Design Patterns & Clean Code', icon: '🧩' },
+    { value: 'Spring Boot & REST APIs', label: 'Spring Boot & REST APIs', icon: '🌱' },
+  ],
+  'C#': [
+    { value: 'C# Basics & Data Types', label: 'C# Basics & Data Types', icon: '📦' },
+    { value: 'OOP & Interfaces', label: 'OOP & Interfaces', icon: '🏛️' },
+    { value: 'LINQ & Lambda Expressions', label: 'LINQ & Lambda Expressions', icon: '🔍' },
+    { value: 'Async/Await', label: 'Async/Await & Asynchronous Programming', icon: '⏳' },
+    { value: 'Collections & Generics', label: 'Collections & Generics', icon: '📋' },
+    { value: 'Exceptions, Delegates & Events', label: 'Exception Handling & Delegates/Events', icon: '📡' },
+    { value: 'Entity Framework Core', label: 'Entity Framework Core & ORM', icon: '🗄️' },
+    { value: 'DI & Design Patterns', label: 'Dependency Injection & Design Patterns', icon: '💉' },
+    { value: 'ASP.NET Core Web API', label: 'ASP.NET Core Web API', icon: '🌐' },
+  ],
+  Python: [
+    { value: 'Basics, Lists & Tuples', label: 'Python Basics, Lists & Tuples', icon: '📦' },
+    { value: 'Dictionaries & Sets', label: 'Dictionaries & Sets', icon: '📖' },
+    { value: 'OOP in Python', label: 'OOP in Python (Classes, Magic Methods)', icon: '🏛️' },
+    { value: 'Decorators & Generators', label: 'Decorators & Generators', icon: '🎀' },
+    { value: 'Exceptions & File Handling', label: 'Exception Handling & File Handling', icon: '⚠️' },
+    { value: 'Modules & Package Management', label: 'Modules & Package Management', icon: '📦' },
+    { value: 'Data Structures & Algorithms', label: 'Data Structures & Algorithms', icon: '🧠' },
+    { value: 'FastAPI / Django Basics', label: 'FastAPI / Django Basics', icon: '🚀' },
+  ],
+};
+
+const TOPIC_ICON_BY_VALUE = Object.fromEntries(
+  Object.values(TOPICS_BY_LANGUAGE).flat().map((t) => [t.value, t.icon])
+);
+
+// Maps this app's UI language codes to the plain-English language name the AI prompt expects
+// (see AiService.QuestionGenerationPromptTemplate's {4} placeholder).
+const CONTENT_LANGUAGE_NAME = {
+  az: 'Azerbaijani',
+  en: 'English',
+  tr: 'Turkish',
+  ru: 'Russian',
+};
+
 export default function AdminPanel() {
-  const { usersList, updateUserInfo, deleteUser, addQuest, quests, t,
+  const { usersList, updateUserInfo, deleteUser, addQuest, quests, t, language,
           adminBanUser, adminUnbanUser, adminTimeoutUser, adminRemoveTimeout, adminBroadcast,
           dynamicShopItems, adminAddShopItem, adminUpdateShopItem, adminDeleteShopItem, adminSetShopItemStock } = useApp();
   const [activeAdminTab, setActiveAdminTab] = useState('users');
@@ -101,7 +153,7 @@ export default function AdminPanel() {
   // replacing the old client-side static template pool.
   const [aiWizardLoading, setAiWizardLoading] = useState(false);
   const [aiWizardError, setAiWizardError] = useState('');
-  const [aiWizardTopic, setAiWizardTopic] = useState('Loops');
+  const [aiWizardTopic, setAiWizardTopic] = useState(TOPICS_BY_LANGUAGE['C#'][0].value);
   const [aiWizardDifficulty, setAiWizardDifficulty] = useState('Easy'); // 'Easy' | 'Medium' | 'Hard'
   const [aiWizardLang, setAiWizardLang] = useState('C#');
 
@@ -116,19 +168,24 @@ export default function AdminPanel() {
       const { ok, data } = await apiFetch('/api/admin/generate-question', {
         method: 'POST',
         auth: true,
-        body: { language: aiWizardLang, topic: aiWizardTopic, difficulty: aiWizardDifficulty },
+        body: {
+          language: aiWizardLang,
+          topic: aiWizardTopic,
+          difficulty: aiWizardDifficulty,
+          contentLanguage: CONTENT_LANGUAGE_NAME[language] || 'Azerbaijani',
+        },
         timeoutMs: 48000,
       });
 
       if (!ok || !data?.question) {
-        setAiWizardError(data?.message || 'AI sual yarada bilmədi. Zəhmət olmasa yenidən cəhd edin.');
+        setAiWizardError(data?.message || t('adminAiGenFailedMsg'));
         return;
       }
 
       const displayDifficulty = aiWizardDifficulty === 'Easy' ? 'Asan' : aiWizardDifficulty === 'Medium' ? 'Orta' : 'Çətin';
       const xpReward = aiWizardDifficulty === 'Easy' ? 100 : aiWizardDifficulty === 'Medium' ? 150 : 200;
       const goldReward = aiWizardDifficulty === 'Easy' ? 50 : aiWizardDifficulty === 'Medium' ? 75 : 100;
-      const defaultIcon = aiWizardTopic === 'Loops' ? '🔄' : aiWizardTopic === 'OOP' ? '🏛️' : aiWizardTopic === 'Lists' ? '📝' : '📦';
+      const defaultIcon = TOPIC_ICON_BY_VALUE[aiWizardTopic] || '📦';
 
       setQuestForm(prev => ({
         ...prev,
@@ -140,17 +197,17 @@ export default function AdminPanel() {
         xpReward,
         goldReward,
         icon: defaultIcon,
-        description: data.description || `Süni İntellekt tərəfindən yaradılmış ${aiWizardDifficulty.toLowerCase()} səviyyəli ${aiWizardLang} tapşırığı.`,
+        description: data.description || `${aiWizardLang} — ${aiWizardTopic} (${aiWizardDifficulty})`,
         question: data.question,
         optionA: data.options?.[0] || '',
         optionB: data.options?.[1] || '',
         optionC: data.options?.[2] || '',
         optionD: data.options?.[3] || '',
         correctIndex: data.correctIndex ?? 0,
-        hint: data.hint || 'Sualı diqqətlə oxuyun.'
+        hint: data.hint || t('adminDefaultHint')
       }));
     } catch {
-      setAiWizardError('Bağlantı kəsildi. Zəhmət olmasa yenidən cəhd edin.');
+      setAiWizardError(t('adminAiConnLostMsg'));
     } finally {
       setAiWizardLoading(false);
     }
@@ -159,7 +216,7 @@ export default function AdminPanel() {
   const handleQuestSubmit = (e) => {
     e.preventDefault();
     if (!questForm.question || !questForm.optionA) {
-      alert("Zəhmət olmasa bütün vacib xanaları doldurun!");
+      alert(t('adminFillRequiredAlert'));
       return;
     }
 
@@ -170,12 +227,12 @@ export default function AdminPanel() {
       difficulty: questForm.difficulty,
       xpReward: Number(questForm.xpReward),
       goldReward: Number(questForm.goldReward),
-      description: questForm.description || 'Yeni əlavə edilmiş proqramlaşdırma səviyyəsi.',
+      description: questForm.description || t('adminDefaultQuestDesc'),
       challenge: {
         question: questForm.question,
         options: [questForm.optionA, questForm.optionB, questForm.optionC, questForm.optionD].filter(Boolean),
         correctIndex: Number(questForm.correctIndex),
-        hint: questForm.hint || 'Sualı diqqətlə oxuyun.'
+        hint: questForm.hint || t('adminDefaultHint')
       }
     };
 
@@ -248,7 +305,7 @@ export default function AdminPanel() {
         <input
           type="text"
           className="input-field"
-          placeholder="Bütün istifadəçilərə canlı bildiriş göndərin..."
+          placeholder={t('adminBroadcastPlaceholder')}
           value={broadcastMessage}
           onChange={(e) => setBroadcastMessage(e.target.value)}
           disabled={broadcastSending}
@@ -259,7 +316,7 @@ export default function AdminPanel() {
           className="btn btn-primary btn-sm"
           disabled={!broadcastMessage.trim() || broadcastSending}
         >
-          {broadcastSending ? 'Göndərilir...' : 'Yayımla'}
+          {broadcastSending ? t('adminBroadcastSending') : t('adminBroadcastSubmit')}
         </button>
       </form>
 
@@ -292,22 +349,22 @@ export default function AdminPanel() {
           {usersList.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
               <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>👥</div>
-              <p style={{ margin: 0, fontWeight: 600 }}>İstifadəçi siyahısı boşdur.</p>
+              <p style={{ margin: 0, fontWeight: 600 }}>{t('adminUsersEmptyTitle')}</p>
               <p style={{ margin: '0.35rem 0 0', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
-                Yalnız Register ekranından yaradılan hesablar burada görünür.
+                {t('adminUsersEmptySubtitle')}
               </p>
             </div>
           ) : (
             <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
               <thead>
                 <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-secondary)', fontSize: '0.85rem' }}>
-                  <th style={{ padding: '0.75rem' }}>İstifadəçi</th>
-                  <th style={{ padding: '0.75rem' }}>Rol</th>
+                  <th style={{ padding: '0.75rem' }}>{t('adminColUser')}</th>
+                  <th style={{ padding: '0.75rem' }}>{t('adminColRole')}</th>
                   <th style={{ padding: '0.75rem' }}>{t('level')}</th>
                   <th style={{ padding: '0.75rem' }}>{t('gold')}</th>
                   <th style={{ padding: '0.75rem' }}>XP</th>
-                  <th style={{ padding: '0.75rem' }}>Status</th>
-                  <th style={{ padding: '0.75rem', textAlign: 'right' }}>Əməliyyatlar</th>
+                  <th style={{ padding: '0.75rem' }}>{t('adminColStatus')}</th>
+                  <th style={{ padding: '0.75rem', textAlign: 'right' }}>{t('adminColActions')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -324,7 +381,7 @@ export default function AdminPanel() {
                     </td>
                     <td style={{ padding: '0.75rem' }}>
                       <span className="badge badge-code">
-                        {isAdminRole(usr.role) ? 'Admin' : 'Tələbə'}
+                        {isAdminRole(usr.role) ? t('adminRole') : t('userRole')}
                       </span>
                     </td>
                     <td style={{ padding: '0.75rem' }}>Lv. {usr.level}</td>
@@ -332,10 +389,10 @@ export default function AdminPanel() {
                     <td style={{ padding: '0.75rem', color: 'var(--accent-cyan)' }}>{usr.xp}</td>
                     <td style={{ padding: '0.75rem' }}>
                       {usr.isBanned
-                        ? <span className="badge" style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--accent-red)', border: '1px solid rgba(239,68,68,0.3)' }}>🚫 Blok</span>
+                        ? <span className="badge" style={{ background: 'rgba(239,68,68,0.12)', color: 'var(--accent-red)', border: '1px solid rgba(239,68,68,0.3)' }}>{t('adminStatusBanned')}</span>
                         : usr.timeoutUntil && new Date(usr.timeoutUntil) > new Date()
-                          ? <span className="badge" style={{ background: 'rgba(245,158,11,0.12)', color: 'var(--accent-gold-light)', border: '1px solid rgba(245,158,11,0.3)' }}>⏱️ Timeout</span>
-                          : <span className="badge" style={{ background: 'rgba(34,197,94,0.08)', color: 'var(--accent-green)', border: '1px solid rgba(34,197,94,0.2)' }}>✅ Aktiv</span>
+                          ? <span className="badge" style={{ background: 'rgba(245,158,11,0.12)', color: 'var(--accent-gold-light)', border: '1px solid rgba(245,158,11,0.3)' }}>{t('adminStatusTimeout')}</span>
+                          : <span className="badge" style={{ background: 'rgba(34,197,94,0.08)', color: 'var(--accent-green)', border: '1px solid rgba(34,197,94,0.2)' }}>{t('adminStatusActive')}</span>
                       }
                     </td>
                     <td style={{ padding: '0.75rem', textAlign: 'right' }}>
@@ -347,20 +404,20 @@ export default function AdminPanel() {
                           <>
                             {usr.isBanned ? (
                               <button className="btn btn-outline btn-sm" onClick={() => adminUnbanUser(usr.id, usr.email)} style={{ padding: '0.25rem 0.6rem', color: 'var(--accent-green)', borderColor: 'rgba(34,197,94,0.35)' }}>
-                                ✅ Bloku Aç
+                                {t('adminUnbanBtn')}
                               </button>
                             ) : (
                               <button className="btn btn-outline btn-sm" onClick={() => adminBanUser(usr.id, usr.email)} style={{ padding: '0.25rem 0.6rem', color: 'var(--accent-red)', borderColor: 'rgba(239,68,68,0.3)' }}>
-                                🚫 Ban
+                                {t('adminBanBtn')}
                               </button>
                             )}
                             {usr.timeoutUntil && new Date(usr.timeoutUntil) > new Date() ? (
                               <button className="btn btn-outline btn-sm" onClick={() => adminRemoveTimeout(usr.id, usr.email)} style={{ padding: '0.25rem 0.6rem', color: 'var(--accent-cyan)', borderColor: 'rgba(6,182,212,0.3)' }}>
-                                ✕ Timeout
+                                {t('adminRemoveTimeoutBtn')}
                               </button>
                             ) : (
                               <button className="btn btn-outline btn-sm" onClick={() => { setTimeoutingUserId(usr.id); }} style={{ padding: '0.25rem 0.6rem', color: 'var(--accent-gold-light)', borderColor: 'rgba(245,158,11,0.3)' }}>
-                                ⏱️ Timeout
+                                {t('adminTimeoutBtn')}
                               </button>
                             )}
                           </>
@@ -386,16 +443,27 @@ export default function AdminPanel() {
           {/* AI Generator Panel */}
           <div style={{ padding: '1.25rem', background: 'rgba(139, 92, 246, 0.06)', borderRadius: 'var(--radius)', border: '1px dashed var(--accent-purple)', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
             <div>
-              <strong style={{ color: 'var(--accent-purple-light)', display: 'block', fontSize: '0.92rem', marginBottom: '0.25rem' }}>🤖 Süni İntellekt Simulyatoru (AI Bot)</strong>
-              <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-muted)' }}>Mövzu və çətinlik dərəcəsinə görə sürətlə tam şablon sual yaradın.</p>
+              <strong style={{ color: 'var(--accent-purple-light)', display: 'block', fontSize: '0.92rem', marginBottom: '0.25rem' }}>{t('adminAiSimTitle')}</strong>
+              <p style={{ margin: 0, fontSize: '0.78rem', color: 'var(--text-muted)' }}>{t('adminAiSimDesc')}</p>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(130px, 1fr))', gap: '0.75rem', alignItems: 'center' }}>
-              
+
               {/* Language Selector */}
               <div className="input-group" style={{ margin: 0 }}>
-                <label className="input-label" style={{ fontSize: '0.7rem' }}>Dil Seçimi</label>
-                <select className="input-field" value={aiWizardLang} onChange={(e) => setAiWizardLang(e.target.value)}>
+                <label className="input-label" style={{ fontSize: '0.7rem' }}>{t('adminLangSelectLabel')}</label>
+                <select
+                  className="input-field"
+                  value={aiWizardLang}
+                  onChange={(e) => {
+                    const nextLang = e.target.value;
+                    setAiWizardLang(nextLang);
+                    // Topics are language-specific — switching language must reset the topic to
+                    // one that's actually valid for it, instead of leaving a stale selection from
+                    // the previous language's list silently sent to the AI prompt.
+                    setAiWizardTopic(TOPICS_BY_LANGUAGE[nextLang][0].value);
+                  }}
+                >
                   <option value="C#">C#</option>
                   <option value="Java">Java</option>
                   <option value="Python">Python</option>
@@ -404,18 +472,17 @@ export default function AdminPanel() {
 
               {/* Topic Selector */}
               <div className="input-group" style={{ margin: 0 }}>
-                <label className="input-label" style={{ fontSize: '0.7rem' }}>Mövzu (Topic)</label>
+                <label className="input-label" style={{ fontSize: '0.7rem' }}>{t('adminTopicLabel')}</label>
                 <select className="input-field" value={aiWizardTopic} onChange={(e) => setAiWizardTopic(e.target.value)}>
-                  <option value="Loops">Loops (Döngülər)</option>
-                  <option value="Variables">Variables (Dəyişənlər)</option>
-                  <option value="OOP">OOP (Obyektlər)</option>
-                  <option value="Lists">Lists (Python Listləri)</option>
+                  {TOPICS_BY_LANGUAGE[aiWizardLang].map((topicOpt) => (
+                    <option key={topicOpt.value} value={topicOpt.value}>{topicOpt.label}</option>
+                  ))}
                 </select>
               </div>
 
               {/* Difficulty Selector */}
               <div className="input-group" style={{ margin: 0 }}>
-                <label className="input-label" style={{ fontSize: '0.7rem' }}>Çətinlik (Difficulty)</label>
+                <label className="input-label" style={{ fontSize: '0.7rem' }}>{t('adminDifficultyLabel')}</label>
                 <select className="input-field" value={aiWizardDifficulty} onChange={(e) => setAiWizardDifficulty(e.target.value)}>
                   <option value="Easy">Easy (Asan)</option>
                   <option value="Medium">Medium (Orta)</option>
@@ -431,7 +498,7 @@ export default function AdminPanel() {
                 disabled={aiWizardLoading}
                 style={{ alignSelf: 'flex-end', height: '38px', fontWeight: 800, padding: '0 1.25rem', boxShadow: 'var(--glow-purple)', opacity: aiWizardLoading ? 0.7 : 1, cursor: aiWizardLoading ? 'wait' : 'pointer' }}
               >
-                {aiWizardLoading ? '🤖 Generasiya olunur...' : '🤖 AI İlə Yarat'}
+                {aiWizardLoading ? t('aiGenerating') : t('aiGenerateBtn')}
               </button>
             </div>
 
@@ -467,7 +534,7 @@ export default function AdminPanel() {
               value={questForm.targetLevelId}
               onChange={e => setQuestForm({ ...questForm, targetLevelId: e.target.value })}
             >
-              <option value="">-- Yeni Mərhələ Yarat ({questForm.targetLanguage}) --</option>
+              <option value="">{t('adminNewLevelOption', { lang: questForm.targetLanguage })}</option>
               {(quests[questForm.targetLanguage] || []).map(q => (
                 <option key={q.id} value={q.id}>{q.levelName} - {q.title}</option>
               ))}
@@ -476,46 +543,46 @@ export default function AdminPanel() {
 
           {/* Sual məlumatları */}
           <div style={{ padding: '1.25rem', background: 'var(--bg-input)', border: '1px solid var(--border-color)', borderRadius: 'var(--border-radius-sm)', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-            <strong style={{ fontSize: '0.85rem', color: 'var(--accent-purple-light)', textTransform: 'uppercase' }}>📝 Sual Əlavə Et</strong>
+            <strong style={{ fontSize: '0.85rem', color: 'var(--accent-purple-light)', textTransform: 'uppercase' }}>{t('adminAddQuestionHeading')}</strong>
 
             <div className="input-group">
-              <label className="input-label">Səviyyə Başlığı (Title)</label>
+              <label className="input-label">{t('adminLevelTitleLabel')}</label>
               <input type="text" className="input-field" value={questForm.title} onChange={e => setQuestForm({ ...questForm, title: e.target.value })} required />
             </div>
 
             <div className="input-group">
-              <label className="input-label">{questForm.targetLanguage} Sualı</label>
+              <label className="input-label">{t('adminQuestionLabel', { lang: questForm.targetLanguage })}</label>
               <textarea className="input-field" value={questForm.question} onChange={e => setQuestForm({ ...questForm, question: e.target.value })} rows={2} required />
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              <div className="input-group"><label className="input-label">Variant A</label><input type="text" className="input-field" value={questForm.optionA} onChange={e => setQuestForm({ ...questForm, optionA: e.target.value })} required /></div>
-              <div className="input-group"><label className="input-label">Variant B</label><input type="text" className="input-field" value={questForm.optionB} onChange={e => setQuestForm({ ...questForm, optionB: e.target.value })} required /></div>
+              <div className="input-group"><label className="input-label">{t('adminOptionLabel', { letter: 'A' })}</label><input type="text" className="input-field" value={questForm.optionA} onChange={e => setQuestForm({ ...questForm, optionA: e.target.value })} required /></div>
+              <div className="input-group"><label className="input-label">{t('adminOptionLabel', { letter: 'B' })}</label><input type="text" className="input-field" value={questForm.optionB} onChange={e => setQuestForm({ ...questForm, optionB: e.target.value })} required /></div>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
-              <div className="input-group"><label className="input-label">Variant C</label><input type="text" className="input-field" value={questForm.optionC} onChange={e => setQuestForm({ ...questForm, optionC: e.target.value })} /></div>
-              <div className="input-group"><label className="input-label">Variant D</label><input type="text" className="input-field" value={questForm.optionD} onChange={e => setQuestForm({ ...questForm, optionD: e.target.value })} /></div>
+              <div className="input-group"><label className="input-label">{t('adminOptionLabel', { letter: 'C' })}</label><input type="text" className="input-field" value={questForm.optionC} onChange={e => setQuestForm({ ...questForm, optionC: e.target.value })} /></div>
+              <div className="input-group"><label className="input-label">{t('adminOptionLabel', { letter: 'D' })}</label><input type="text" className="input-field" value={questForm.optionD} onChange={e => setQuestForm({ ...questForm, optionD: e.target.value })} /></div>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem' }}>
               <div className="input-group">
-                <label className="input-label">Düzgün Variant</label>
+                <label className="input-label">{t('adminCorrectOptionLabel')}</label>
                 <select className="input-field" value={questForm.correctIndex} onChange={e => setQuestForm({ ...questForm, correctIndex: Number(e.target.value) })}>
-                  <option value={0}>Variant A</option>
-                  <option value={1}>Variant B</option>
-                  <option value={2}>Variant C</option>
-                  <option value={3}>Variant D</option>
+                  <option value={0}>{t('adminOptionLabel', { letter: 'A' })}</option>
+                  <option value={1}>{t('adminOptionLabel', { letter: 'B' })}</option>
+                  <option value={2}>{t('adminOptionLabel', { letter: 'C' })}</option>
+                  <option value={3}>{t('adminOptionLabel', { letter: 'D' })}</option>
                 </select>
               </div>
-              <div className="input-group"><label className="input-label">İpucu (Hint)</label><input type="text" className="input-field" value={questForm.hint} onChange={e => setQuestForm({ ...questForm, hint: e.target.value })} /></div>
+              <div className="input-group"><label className="input-label">{t('adminHintFieldLabel')}</label><input type="text" className="input-field" value={questForm.hint} onChange={e => setQuestForm({ ...questForm, hint: e.target.value })} /></div>
             </div>
 
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.75rem' }}>
-              <div className="input-group" style={{ margin: 0 }}><label className="input-label">Mövzu (Topic)</label><input type="text" className="input-field" value={questForm.topic} onChange={e => setQuestForm({ ...questForm, topic: e.target.value })} /></div>
-              <div className="input-group" style={{ margin: 0 }}><label className="input-label">Çətinlik</label><select className="input-field" value={questForm.difficulty} onChange={e => setQuestForm({ ...questForm, difficulty: e.target.value })}><option value="Asan">Asan</option><option value="Orta">Orta</option><option value="Çətin">Çətin</option></select></div>
-              <div className="input-group" style={{ margin: 0 }}><label className="input-label">XP Mükafatı</label><input type="number" className="input-field" value={questForm.xpReward} onChange={e => setQuestForm({ ...questForm, xpReward: e.target.value })} /></div>
-              <div className="input-group" style={{ margin: 0 }}><label className="input-label">Qızıl Mükafatı</label><input type="number" className="input-field" value={questForm.goldReward} onChange={e => setQuestForm({ ...questForm, goldReward: e.target.value })} /></div>
+              <div className="input-group" style={{ margin: 0 }}><label className="input-label">{t('adminTopicLabel')}</label><input type="text" className="input-field" value={questForm.topic} onChange={e => setQuestForm({ ...questForm, topic: e.target.value })} /></div>
+              <div className="input-group" style={{ margin: 0 }}><label className="input-label">{t('adminDifficultyLabel')}</label><select className="input-field" value={questForm.difficulty} onChange={e => setQuestForm({ ...questForm, difficulty: e.target.value })}><option value="Asan">Asan</option><option value="Orta">Orta</option><option value="Çətin">Çətin</option></select></div>
+              <div className="input-group" style={{ margin: 0 }}><label className="input-label">{t('adminXpRewardLabel')}</label><input type="number" className="input-field" value={questForm.xpReward} onChange={e => setQuestForm({ ...questForm, xpReward: e.target.value })} /></div>
+              <div className="input-group" style={{ margin: 0 }}><label className="input-label">{t('adminGoldRewardLabel')}</label><input type="number" className="input-field" value={questForm.goldReward} onChange={e => setQuestForm({ ...questForm, goldReward: e.target.value })} /></div>
             </div>
           </div>
 
@@ -547,19 +614,19 @@ export default function AdminPanel() {
           {dynamicShopItems.length === 0 ? (
             <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-secondary)' }}>
               <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>🛒</div>
-              <p style={{ margin: 0, fontWeight: 600 }}>Mağaza boşdur.</p>
+              <p style={{ margin: 0, fontWeight: 600 }}>{t('adminShopEmptyMsg')}</p>
             </div>
           ) : (
             <div style={{ overflowX: 'auto' }}>
               <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left' }}>
                 <thead>
                   <tr style={{ borderBottom: '1px solid var(--border-color)', color: 'var(--text-secondary)', fontSize: '0.8rem' }}>
-                    <th style={{ padding: '0.65rem' }}>Əşya</th>
-                    <th style={{ padding: '0.65rem' }}>Növ</th>
-                    <th style={{ padding: '0.65rem' }}>Qiymət</th>
-                    <th style={{ padding: '0.65rem' }}>Təsvir</th>
-                    <th style={{ padding: '0.65rem' }}>Stok</th>
-                    <th style={{ padding: '0.65rem', textAlign: 'right' }}>Əməliyyatlar</th>
+                    <th style={{ padding: '0.65rem' }}>{t('adminColItem')}</th>
+                    <th style={{ padding: '0.65rem' }}>{t('adminColType')}</th>
+                    <th style={{ padding: '0.65rem' }}>{t('adminColPrice')}</th>
+                    <th style={{ padding: '0.65rem' }}>{t('adminColDesc')}</th>
+                    <th style={{ padding: '0.65rem' }}>{t('adminColStock')}</th>
+                    <th style={{ padding: '0.65rem', textAlign: 'right' }}>{t('adminColActions')}</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -612,7 +679,7 @@ export default function AdminPanel() {
                               style={{ padding: '0.1rem 0.4rem', display: 'flex', alignItems: 'center' }}
                               onClick={() => adjustShopStock(item, -1)}
                               disabled={!hasLimitedStock || item.stock <= 0}
-                              title="Stoku azalt"
+                              title={t('adminStockDecreaseTitle')}
                             >
                               <Minus size={11} />
                             </button>
@@ -624,7 +691,7 @@ export default function AdminPanel() {
                               className="btn btn-outline btn-sm"
                               style={{ padding: '0.1rem 0.4rem', display: 'flex', alignItems: 'center' }}
                               onClick={() => hasLimitedStock ? adjustShopStock(item, 1) : adminSetShopItemStock(item.id, 10)}
-                              title={hasLimitedStock ? 'Stoku artır' : 'Limitli stok təyin et (10)'}
+                              title={hasLimitedStock ? t('adminStockIncreaseTitle') : t('adminStockSetLimitedTitle')}
                             >
                               <Plus size={11} />
                             </button>
@@ -667,13 +734,13 @@ export default function AdminPanel() {
       {showAddShopModal && (
         <div className="modal-overlay" onClick={() => setShowAddShopModal(false)}>
           <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '480px', maxHeight: '85vh', overflowY: 'auto' }}>
-            <h3 style={{ marginBottom: '1.25rem' }}>➕ Yeni Mağaza Əşyası</h3>
+            <h3 style={{ marginBottom: '1.25rem' }}>{t('adminNewShopItemTitle')}</h3>
 
             {[
-              { label: 'Ad', key: 'name', type: 'text' },
-              { label: 'Emoji', key: 'emoji', type: 'text' },
-              { label: 'Qiymət (Gold)', key: 'price', type: 'number' },
-              { label: 'Təsvir', key: 'desc', type: 'text' },
+              { label: t('adminNameLabel'), key: 'name', type: 'text' },
+              { label: t('adminEmojiLabel'), key: 'emoji', type: 'text' },
+              { label: t('adminPriceGoldLabel'), key: 'price', type: 'number' },
+              { label: t('adminColDesc'), key: 'desc', type: 'text' },
             ].map((field) => (
               <div key={field.key} className="input-group">
                 <label className="input-label">{field.label}</label>
@@ -687,27 +754,27 @@ export default function AdminPanel() {
             ))}
 
             <div className="input-group">
-              <label className="input-label">Item Type</label>
+              <label className="input-label">{t('adminItemTypeLabel')}</label>
               <select className="input-field" value={newShopItem.itemType} onChange={(e) => setNewShopItem((prev) => ({ ...prev, itemType: e.target.value }))}>
                 {SHOP_ITEM_TYPE_OPTS.map((o) => <option key={o}>{o}</option>)}
               </select>
             </div>
 
             <div className="input-group">
-              <label className="input-label">Stok (boş = limitsiz)</label>
+              <label className="input-label">{t('adminStockFieldLabel')}</label>
               <input
                 type="number"
                 min={0}
                 className="input-field"
                 value={newShopItem.stock ?? ''}
-                placeholder="Limitsiz"
+                placeholder={t('adminUnlimitedWord')}
                 onChange={(e) => setNewShopItem((prev) => ({ ...prev, stock: e.target.value === '' ? null : Number(e.target.value) }))}
               />
             </div>
 
             <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1rem' }}>
               <button className="btn btn-outline" style={{ flex: 1 }} onClick={() => setShowAddShopModal(false)}>{t('cancel')}</button>
-              <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleAddShopItem}>➕ Əlavə Et</button>
+              <button className="btn btn-primary" style={{ flex: 1 }} onClick={handleAddShopItem}>{t('adminAddBtn')}</button>
             </div>
           </div>
         </div>
@@ -735,7 +802,7 @@ export default function AdminPanel() {
             <h3 style={{ marginBottom: '1rem' }}>{t('editUserTitle')} ({editingUser.name})</h3>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem', marginBottom: '1.5rem' }}>
               <div className="input-group">
-                <label className="input-label">Ad</label>
+                <label className="input-label">{t('adminNameLabel')}</label>
                 <input className="input-field" value={editForm.name} onChange={e => setEditForm({...editForm, name: e.target.value})} />
               </div>
               <div className="input-group">
@@ -747,10 +814,10 @@ export default function AdminPanel() {
                 <input type="number" className="input-field" value={editForm.gold} onChange={e => setEditForm({...editForm, gold: e.target.value})} />
               </div>
               <div className="input-group">
-                <label className="input-label">Rol</label>
+                <label className="input-label">{t('adminRoleFieldLabel')}</label>
                 <select className="input-field" value={editForm.role} onChange={e => setEditForm({...editForm, role: e.target.value})}>
-                  <option value="İstifadəçi">User</option>
-                  <option value="Admin">Admin</option>
+                  <option value="İstifadəçi">{t('userRole')}</option>
+                  <option value="Admin">{t('adminRole')}</option>
                 </select>
               </div>
 
@@ -762,12 +829,12 @@ export default function AdminPanel() {
                     checked={editForm.applyCoinsOverride}
                     onChange={e => setEditForm({ ...editForm, applyCoinsOverride: e.target.checked })}
                   />
-                  🪙 Coin balansını / limitsiz coini dəyiş (backend)
+                  {t('adminCoinOverrideLabel')}
                 </label>
                 {editForm.applyCoinsOverride && (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '0.75rem' }}>
                     <div className="input-group" style={{ margin: 0 }}>
-                      <label className="input-label">Yeni Coin balansı</label>
+                      <label className="input-label">{t('adminNewCoinBalanceLabel')}</label>
                       <input
                         type="number"
                         min={0}
@@ -783,7 +850,7 @@ export default function AdminPanel() {
                         checked={editForm.hasUnlimitedCoins}
                         onChange={e => setEditForm({ ...editForm, hasUnlimitedCoins: e.target.checked })}
                       />
-                      ♾️ Limitsiz coin (mağazada həmişə ala bilər)
+                      {t('adminUnlimitedCoinLabel')}
                     </label>
                   </div>
                 )}
@@ -802,7 +869,7 @@ export default function AdminPanel() {
         <div className="modal-overlay" onClick={() => setDeletingUserId(null)}>
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '350px', textAlign: 'center' }}>
             <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>⚠️</div>
-            <h3 style={{ marginBottom: '1rem', color: 'var(--accent-red)' }}>Silmə Təsdiq</h3>
+            <h3 style={{ marginBottom: '1rem', color: 'var(--accent-red)' }}>{t('adminDeleteUserConfirmTitle')}</h3>
             <p style={{ marginBottom: '1.5rem', color: 'var(--text-secondary)' }}>{t('deleteUserConfirm')}</p>
             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
               <button className="btn btn-outline" onClick={() => setDeletingUserId(null)}>{t('cancel')}</button>
@@ -817,10 +884,10 @@ export default function AdminPanel() {
         <div className="modal-overlay" onClick={() => setTimeoutingUserId(null)}>
           <div className="modal-content" onClick={e => e.stopPropagation()} style={{ maxWidth: '350px', textAlign: 'center' }}>
             <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>⏱️</div>
-            <h3 style={{ marginBottom: '1rem', color: 'var(--accent-gold-light)' }}>Timeout Müddəti</h3>
-            <p style={{ marginBottom: '1rem', fontSize: '0.88rem', color: 'var(--text-secondary)' }}>İstifadəçi nə qədər məhdudlaşdırılsın?</p>
+            <h3 style={{ marginBottom: '1rem', color: 'var(--accent-gold-light)' }}>{t('adminTimeoutDurationTitle')}</h3>
+            <p style={{ marginBottom: '1rem', fontSize: '0.88rem', color: 'var(--text-secondary)' }}>{t('adminTimeoutQuestion')}</p>
             <div className="input-group" style={{ textAlign: 'left', marginBottom: '1.5rem' }}>
-              <label className="input-label">Dəqiqə (məs: 10, 60, 1440)</label>
+              <label className="input-label">{t('adminMinutesLabel')}</label>
               <input
                 type="number"
                 min={1}
@@ -830,7 +897,7 @@ export default function AdminPanel() {
               />
             </div>
             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
-              <button className="btn btn-outline" onClick={() => setTimeoutingUserId(null)}>Ləğv et</button>
+              <button className="btn btn-outline" onClick={() => setTimeoutingUserId(null)}>{t('cancel')}</button>
               <button
                 className="btn btn-primary"
                 style={{ background: 'var(--accent-gold-light)', borderColor: 'var(--accent-gold-light)', color: '#000' }}
@@ -840,7 +907,7 @@ export default function AdminPanel() {
                   setTimeoutingUserId(null);
                 }}
               >
-                Tətbiqi Et
+                {t('adminApplyBtn')}
               </button>
             </div>
           </div>
@@ -866,7 +933,7 @@ export default function AdminPanel() {
               </div>
             </div>
 
-            <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', marginBottom: '0.5rem' }}>AI sual yaradır...</h3>
+            <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', marginBottom: '0.5rem' }}>{t('adminAiOverlayTitle')}</h3>
             <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>
               {aiWizardLang} · {aiWizardTopic} · {aiWizardDifficulty}
             </p>

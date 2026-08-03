@@ -4,7 +4,7 @@ import { useApp } from '../../context/AppContext';
 import { shopItems } from '../../data/mockData';
 
 export default function ProfileHeader() {
-  const { user, t, timeUntilNextHeart, activeAvatarId, activeAvatarUrl } = useApp();
+  const { user, t, timeUntilNextHeart, activeAvatarId, activeAvatarUrl, coins, hasUnlimitedCoins } = useApp();
   const isAdmin = user.role === 'Admin' || user.role === 'AdminRole';
 
   // Resolve the displayed avatar: activeAvatarUrl > active avatar emoji > user default emoji
@@ -75,7 +75,7 @@ export default function ProfileHeader() {
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', alignItems: 'flex-end', minWidth: '150px' }}>
         <div className="profile-gold-box">
           <span className="profile-gold-icon">🪙</span>
-          <span className="profile-gold-amount">{isAdmin ? '∞' : user.gold.toLocaleString()}</span>
+          <span className="profile-gold-amount">{hasUnlimitedCoins ? '∞' : coins.toLocaleString()}</span>
         </div>
 
         {/* Hearts UI */}

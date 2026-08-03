@@ -1,11 +1,13 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useApp } from '../../context/AppContext';
+import { translateLevelTitle, translateChallenges } from '../../i18n/contentTranslations';
 
 const QUESTION_TIME_SECONDS = 45;
 const TIME_FREEZE_BONUS_SECONDS = 20;
 
 export default function QuestModal({ quest, onClose }) {
-  const { completeQuest, completedQuests, user, deductHeart, spendJoker, spendTimeFreeze, spendHintCard, spendAnswerChange, t, activeProgrammingLanguage, addFailedQuestion, triggerAIExplanation } = useApp();
+  const { completeQuest, completedQuests, user, deductHeart, spendJoker, spendTimeFreeze, spendHintCard, spendAnswerChange, t, activeProgrammingLanguage, language, addFailedQuestion, triggerAIExplanation } = useApp();
+  const displayTitle = translateLevelTitle(activeProgrammingLanguage, quest.id, language, quest.title);
 
   const [currentQIdx, setCurrentQIdx] = useState(0);
   const [selectedOption, setSelectedOption] = useState(null);
@@ -25,7 +27,10 @@ export default function QuestModal({ quest, onClose }) {
   const isAlreadyCompleted = (completedQuests[activeProgrammingLanguage] || []).includes(quest.id);
 
   // Backwards compatibility if quest structure lacks challenges array
-  const challengeList = quest.challenges || [quest.challenge];
+  const rawChallengeList = quest.challenges || [quest.challenge];
+  // Localizes question/options/hint into the user's selected UI language, falling back to the
+  // original Azerbaijani text for any level/language combination not yet translated.
+  const challengeList = translateChallenges(activeProgrammingLanguage, quest.id, language, rawChallengeList);
   const currentChallenge = challengeList[currentQIdx];
   const noHearts = user.hearts <= 0 && !isAlreadyCompleted;
 
@@ -187,7 +192,7 @@ export default function QuestModal({ quest, onClose }) {
           </div>
           <div>
             <h2 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0 }}>
-              {quest.title}
+              {displayTitle}
             </h2>
             <div style={{ display: 'flex', gap: '0.4rem', marginTop: '0.25rem' }}>
               <span className={`badge ${difficultyClass}`}>{quest.difficulty}</span>

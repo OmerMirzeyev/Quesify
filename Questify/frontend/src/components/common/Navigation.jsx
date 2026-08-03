@@ -18,6 +18,8 @@ export default function Navigation() {
     clearNotifications,
     userRole,
     streak,
+    coins,
+    hasUnlimitedCoins,
   } = useApp();
 
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
@@ -87,9 +89,11 @@ export default function Navigation() {
           <option value="en">EN</option>
         </select>
 
-        {/* Gold Badge */}
+        {/* Gold Badge — the real, backend-authoritative wallet (same source GoldShop spends
+            from), not the legacy local user.gold counter, so the number shown here always
+            matches what's actually spendable in the Shop. */}
         <div className="nav-gold-badge">
-          🪙 <span id="nav-gold-count">{isAppAdmin(userRole) ? '∞' : user.gold.toLocaleString()}</span>
+          🪙 <span id="nav-gold-count">{hasUnlimitedCoins ? '∞' : coins.toLocaleString()}</span>
         </div>
 
         {/* Streak Badge */}

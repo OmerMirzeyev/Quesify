@@ -111,6 +111,10 @@ export default function AuthPage() {
     setSlideDir(newMode === 'login' ? 'left' : 'right');
     setMode(newMode);
     setStep(1);
+    // The login/register card sits above the long marketing landing page (hero, features, CTA,
+    // footer) in normal document flow — "Start for Free" and other landing CTAs live far below
+    // it, so without this the mode switch happens off-screen and looks like the click did nothing.
+    document.getElementById('auth-form-section')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
     setError('');
     setSuccessMsg('');
     setValidationErrors({});
@@ -589,7 +593,7 @@ export default function AuthPage() {
         onLoginClick={() => switchMode('login')}
         onStartClick={() => switchMode('register')}
       />
-      <div className="auth-container" style={{ animation: 'fadeIn 0.6s ease' }}>
+      <div id="auth-form-section" className="auth-container" style={{ animation: 'fadeIn 0.6s ease' }}>
 
       {/* ── Welcome Splash Overlay ── */}
       {showWelcomeSplash && (

@@ -13,13 +13,30 @@ export default function FriendsPage() {
     acceptFriendRequest,
     rejectFriendRequest,
     sendChatMessage,
+    loadChatConversation,
     markChatAsRead,
+    setActiveChatEmail,
   } = useApp();
 
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedFriend, setSelectedFriend] = useState(null); // friend email for chat drawer
   const [chatInput, setChatInput] = useState('');
   const chatEndRef = useRef(null);
+
+  // Hydrate the real conversation from the backend the moment a chat is opened — keyed only on
+  // selectedFriend (not chats) so it fetches once per open instead of re-fetching on every local
+  // chats update (e.g. right after sending a message).
+  useEffect(() => {
+    if (selectedFriend) loadChatConversation(selectedFriend);
+  }, [selectedFriend, loadChatConversation]);
+
+  // Tells AppContext's SignalR handler which conversation is on-screen right now, so a message
+  // arriving from this exact friend skips the redundant toast/bell entry — cleared on close/unmount
+  // (tab switch away from Friends) so it never lingers and suppresses a later, unrelated message.
+  useEffect(() => {
+    setActiveChatEmail(selectedFriend);
+    return () => setActiveChatEmail(null);
+  }, [selectedFriend, setActiveChatEmail]);
 
   // Mark selected friend's chat as read when opened or updated
   useEffect(() => {

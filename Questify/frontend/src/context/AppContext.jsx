@@ -7,6 +7,9 @@ import {
   QUESTS_BY_CHAPTER,
 } from '../data/mockData';
 import { translations } from '../i18n/translations';
+// Backend course slugs are URL-safe (never the raw 'C#', which percent-encodes to 'C%23') —
+// must match LeaderboardController's CourseSlugToTrack exactly.
+const TRACK_TO_COURSE_SLUG = { 'C#': 'csharp', Java: 'java', Python: 'python' };
 import { apiFetch } from '../utils/api';
 import { connectNotificationHub, disconnectNotificationHub } from '../utils/signalr';
 import {
@@ -21,7 +24,6 @@ import {
   buildProgressSnapshot,
   DEFAULT_USER_PROGRESS,
   getAllUsersDirectory,
-  getLeaderboardForTrack,
   getStoredQuests,
   saveStoredQuests,
   updateRegisteredUserById,
@@ -136,6 +138,9 @@ export const AppProvider = ({ children }) => {
   const [userBadges, setUserBadges] = useState([]);
   const [backendUserId, setBackendUserId] = useState(null);
   const [liveLeaderboard, setLiveLeaderboard] = useState([]);
+  // Per-course backend leaderboard rows, keyed by track ('C#' | 'Java' | 'Python') — fetched
+  // lazily whenever the Leaderboard tab switches tracks (see Leaderboard.jsx's effect).
+  const [trackLeaderboards, setTrackLeaderboards] = useState({});
 
   const loadUserBadges = async (id) => {
     if (!id) return;
@@ -165,6 +170,15 @@ export const AppProvider = ({ children }) => {
       if (ok) setLiveLeaderboard(data);
     } catch { /* offline */ }
   };
+
+  const loadTrackLeaderboard = useCallback(async (track) => {
+    const slug = TRACK_TO_COURSE_SLUG[track];
+    if (!slug) return;
+    try {
+      const { ok, data } = await apiFetch(`/api/leaderboard?course=${slug}`);
+      if (ok) setTrackLeaderboards((prev) => ({ ...prev, [track]: data }));
+    } catch { /* offline */ }
+  }, []);
 
   // Load shop items from backend on mount
   const loadShopItems = async () => {
@@ -259,11 +273,17 @@ export const AppProvider = ({ children }) => {
 
   const syncMapCompletion = async (track, chapterIndex, levelIndex, isLastLevelOfChapter) => {
     try {
-      await apiFetch('/api/map/complete', {
+      const { ok, data } = await apiFetch('/api/map/complete', {
         method: 'POST',
         auth: true,
         body: { track, chapterIndex, levelIndex, isLastLevelOfChapter },
       });
+      // First-time completions award real backend Coins (flat per-level, like Xp) — sync the
+      // wallet balance the Shop reads so it actually grows from gameplay instead of staying at 0.
+      if (ok && data?.coins !== undefined) {
+        setCoins(data.coins);
+        setHasUnlimitedCoins(data.hasUnlimitedCoins);
+      }
       loadMapProgress(track);
     } catch { /* offline — local completedQuests still gates progress */ }
   };
@@ -453,6 +473,12 @@ export const AppProvider = ({ children }) => {
   const [chats, setChats] = useState({});
   const [claimedChests, setClaimedChests] = useState([]);
   const [notifications, setNotifications] = useState([]);
+  // Email of the friend whose chat drawer is currently open (set by FriendsPage) — read via a
+  // ref inside the SignalR handler below so an incoming message from that same person doesn't
+  // also toast/bell-notify someone already watching the conversation live.
+  const [activeChatEmail, setActiveChatEmail] = useState(null);
+  const activeChatEmailRef = useRef(null);
+  useEffect(() => { activeChatEmailRef.current = activeChatEmail; }, [activeChatEmail]);
 
   const skipPersistRef = useRef(false);
 
@@ -741,6 +767,7 @@ export const AppProvider = ({ children }) => {
     setUserBadges([]);
     setBackendUserId(null);
     setLiveLeaderboard([]);
+    setTrackLeaderboards({});
   };
 
   const selectPrimaryLanguage = (lang) => {
@@ -1123,9 +1150,31 @@ export const AppProvider = ({ children }) => {
     if (!token) return undefined;
 
     connectNotificationHub(token, (payload) => {
-      const icon = payload.type === 'moderation' ? '🛡️' : payload.type === 'platform_update' ? '📣' : '🔔';
-      sonnerToast(payload.message, { icon });
-      pushNotification(payload.type, payload.message, icon);
+      const senderEmail = payload.type === 'chat_message' ? payload.data?.senderEmail?.toLowerCase() : null;
+      // If this is a chat message from whoever the user currently has open in the chat drawer,
+      // they're already watching it arrive live — skip the redundant toast + bell entry.
+      const isViewingThisChat = !!senderEmail && senderEmail === activeChatEmailRef.current?.toLowerCase();
+
+      if (!isViewingThisChat) {
+        const icon = payload.type === 'moderation' ? '🛡️'
+          : payload.type === 'platform_update' ? '📣'
+          : payload.type === 'chat_message' ? '💬'
+          : '🔔';
+        sonnerToast(payload.message, { icon });
+        pushNotification(payload.type, payload.message, icon);
+      }
+
+      // Live-append the incoming message so an already-open chat window updates immediately,
+      // instead of only showing up after the friend list/chat is reopened.
+      if (senderEmail) {
+        setChats(prev => ({
+          ...prev,
+          [senderEmail]: [
+            ...(prev[senderEmail] || []),
+            { id: Date.now(), sender: senderEmail, text: payload.data.text, timestamp: Date.now(), isRead: isViewingThisChat },
+          ],
+        }));
+      }
     });
 
     return () => disconnectNotificationHub();
@@ -1222,28 +1271,34 @@ export const AppProvider = ({ children }) => {
     showToast('İstifadəçi silindi', '🗑️');
   };
 
-  // Global tab is backend-authoritative (live across devices, sorted by real Xp); per-track tabs
-  // stay on the local trackStats-derived leaderboard for now, since Xp isn't tracked per-track
-  // server-side.
+  const mapBackendLeaderboardEntry = (entry) => ({
+    id: entry.id,
+    email: null,
+    name: `${entry.firstName} ${entry.lastName}`.trim() || user.username,
+    firstName: entry.firstName,
+    lastName: entry.lastName,
+    emoji: entry.emoji || '🎮',
+    customProfileImage: entry.avatarUrl || null,
+    xp: entry.xp ?? 0,
+    streak: entry.currentStreak ?? 0,
+    gold: 0,
+    level: null,
+    role: entry.role,
+    isCurrentUser: backendUserId != null && entry.id === backendUserId,
+  });
+
+  // Every track (Global and per-course) is strictly backend-authoritative: real XP, joined
+  // against Users, live across devices. No local/mock fallback — until the backend responds for
+  // a given track, that tab renders an empty list rather than any locally-cached data.
   const getLeaderboard = (track) => {
     if (track === 'Global') {
-      return liveLeaderboard.map((entry) => ({
-        id: entry.id,
-        email: null,
-        name: `${entry.firstName} ${entry.lastName}`.trim() || user.username,
-        firstName: entry.firstName,
-        lastName: entry.lastName,
-        emoji: entry.emoji || '🎮',
-        customProfileImage: entry.avatarUrl || null,
-        xp: entry.xp ?? 0,
-        streak: entry.currentStreak ?? 0,
-        gold: 0,
-        level: null,
-        role: entry.role,
-        isCurrentUser: backendUserId != null && entry.id === backendUserId,
-      }));
+      return liveLeaderboard.map(mapBackendLeaderboardEntry);
     }
-    return getLeaderboardForTrack(track, sessionEmail);
+    const backendRows = trackLeaderboards[track];
+    if (backendRows === undefined) {
+      return [];
+    }
+    return backendRows.map(mapBackendLeaderboardEntry);
   };
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -1356,37 +1411,59 @@ export const AppProvider = ({ children }) => {
     showToast('Sorğu rədd edildi.', 'ℹ️');
   };
 
-  const sendChatMessage = (friendEmail, text) => {
-    if (!text.trim()) return;
+  // Persists via POST /api/chat/send (real backend delivery + SignalR toast to the receiver —
+  // see the "chat_message" case in connectNotificationHub below) instead of the old approach of
+  // writing straight into the friend's localStorage progress, which only ever worked when both
+  // accounts happened to share the same browser.
+  const sendChatMessage = async (friendEmail, text) => {
+    const trimmed = text.trim();
+    if (!trimmed) return;
     const cleanEmail = friendEmail.toLowerCase();
 
-    const newMessage = {
+    const optimisticMessage = {
       id: Date.now(),
       sender: sessionEmail,
-      text: text,
+      text: trimmed,
       timestamp: Date.now(),
       isRead: true, // Messages sent by the current user are always "read" by them
     };
 
-    // Update current user chat state
-    setChats(prev => {
-      const prevMessages = prev[cleanEmail] || [];
-      return {
-        ...prev,
-        [cleanEmail]: [...prevMessages, newMessage]
-      };
-    });
+    setChats(prev => ({
+      ...prev,
+      [cleanEmail]: [...(prev[cleanEmail] || []), optimisticMessage],
+    }));
 
-    // Push the message to the friend's chat storage with isRead: false
-    // (it is unread from the friend's perspective until they open it)
-    const messageForFriend = { ...newMessage, isRead: false };
-    const otherUserProgress = getUserProgress(cleanEmail);
-    otherUserProgress.chats = otherUserProgress.chats || {};
-    const friendConvKey = sessionEmail.toLowerCase();
-    otherUserProgress.chats[friendConvKey] = otherUserProgress.chats[friendConvKey] || [];
-    otherUserProgress.chats[friendConvKey].push(messageForFriend);
-    saveUserProgress(cleanEmail, otherUserProgress);
+    try {
+      const { ok, data } = await apiFetch('/api/chat/send', {
+        method: 'POST',
+        auth: true,
+        body: { receiverEmail: cleanEmail, text: trimmed },
+      });
+      if (!ok) showToast(data?.message || 'Mesaj göndərilmədi.', '❌');
+    } catch {
+      showToast('Əlaqə xətası', '❌');
+    }
   };
+
+  // Hydrates a conversation from the backend (source of truth across devices) — called when a
+  // friend's chat window is opened. Also marks the friend's messages read server-side as a side
+  // effect (see ChatController.GetConversation).
+  const loadChatConversation = useCallback(async (friendEmail) => {
+    if (!friendEmail) return;
+    const cleanEmail = friendEmail.toLowerCase();
+    try {
+      const { ok, data } = await apiFetch(`/api/chat/conversation?withEmail=${encodeURIComponent(cleanEmail)}`, { auth: true });
+      if (!ok || !Array.isArray(data)) return;
+      const mapped = data.map((m) => ({
+        id: m.id,
+        sender: m.senderEmail.toLowerCase(),
+        text: m.text,
+        timestamp: new Date(m.sentAt).getTime(),
+        isRead: m.isRead,
+      }));
+      setChats(prev => ({ ...prev, [cleanEmail]: mapped }));
+    } catch { /* offline — keep whatever's already in local state */ }
+  }, []);
 
   // Mark all messages from a single chat as read
   const markChatAsRead = (friendEmail) => {
@@ -1506,6 +1583,7 @@ export const AppProvider = ({ children }) => {
     pushNotification,
     markAllNotificationsRead,
     clearNotifications,
+    setActiveChatEmail,
     // Exposing advanced features states & handlers
     friends,
     friendRequests,
@@ -1515,6 +1593,7 @@ export const AppProvider = ({ children }) => {
     acceptFriendRequest,
     rejectFriendRequest,
     sendChatMessage,
+    loadChatConversation,
     markChatAsRead,
     markAllChatsRead,
     claimTreasureChest,
@@ -1537,6 +1616,7 @@ export const AppProvider = ({ children }) => {
     backendUserId,
     liveLeaderboard,
     loadLiveLeaderboard,
+    loadTrackLeaderboard,
   };
 
   return <AppContext.Provider value={value}>{children}</AppContext.Provider>;

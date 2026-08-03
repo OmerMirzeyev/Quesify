@@ -13,11 +13,6 @@ namespace backend.Controllers;
 [Authorize]
 public class MapController : ControllerBase
 {
-    // Flat server-side XP award per newly-completed level — the frontend's own xpReward values
-    // vary per quest and stay purely local; this is a separate, simpler backend-authoritative
-    // total used for the leaderboard and XP-based badges.
-    private const int LevelCompletionXp = 20;
-
     private readonly AppDbContext _context;
 
     public MapController(AppDbContext context)
@@ -92,7 +87,8 @@ public class MapController : ControllerBase
         // is completed — CompleteLevel is otherwise idempotent and gets called again on retries.
         if (!wasAlreadyCompleted)
         {
-            user.Xp += LevelCompletionXp;
+            user.Xp += GamificationConstants.LevelCompletionXp;
+            user.Coins += GamificationConstants.LevelCompletionCoins;
 
             var otherCompletedCount = await _context.UserMapProgress
                 .CountAsync(p => p.UserId == user.Id && p.IsCompleted && p.Id != current.Id);
@@ -132,7 +128,9 @@ public class MapController : ControllerBase
         return Ok(new
         {
             message = "Səviyyə tamamlandı.",
-            unlockedNext = new { track = model.Track, chapterIndex = nextChapterIndex, levelIndex = nextLevelIndex }
+            unlockedNext = new { track = model.Track, chapterIndex = nextChapterIndex, levelIndex = nextLevelIndex },
+            coins = user.Coins,
+            hasUnlimitedCoins = user.HasEffectiveUnlimitedCoins()
         });
     }
 }

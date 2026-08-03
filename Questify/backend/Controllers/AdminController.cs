@@ -53,7 +53,8 @@ public class AdminController : ControllerBase
         try
         {
             var generated = await _aiService.GenerateQuestionAsync(
-                request.Language.Trim(), request.Topic.Trim(), request.Difficulty.Trim(), cts.Token);
+                request.Language.Trim(), request.Topic.Trim(), request.Difficulty.Trim(),
+                request.ContentLanguage?.Trim(), cts.Token);
 
             if (generated is null)
             {

@@ -78,7 +78,7 @@ const TRACK_TABS = [
 ];
 
 export default function Leaderboard() {
-  const { getLeaderboard, user, t, customProfileImage, trackStats } = useApp();
+  const { getLeaderboard, loadTrackLeaderboard, user, t, customProfileImage } = useApp();
   const [activeTrack, setActiveTrack] = useState('Global');
   const [weeklyRemaining, setWeeklyRemaining] = useState(getWeeklyResetRemainingMs());
 
@@ -88,6 +88,13 @@ export default function Leaderboard() {
     }, 30000);
     return () => clearInterval(interval);
   }, []);
+
+  // Per-course tabs are backend-authoritative (see LeaderboardController's ?course= branch) —
+  // fetch that track's rows the moment its tab is selected. Global is loaded once at login (see
+  // AppContext) and refreshed elsewhere, so it's excluded here.
+  useEffect(() => {
+    if (activeTrack !== 'Global') loadTrackLeaderboard(activeTrack);
+  }, [activeTrack, loadTrackLeaderboard]);
 
   const trackConfig = TRACK_TABS.find((t) => t.id === activeTrack) || TRACK_TABS[0];
 
@@ -116,12 +123,9 @@ export default function Leaderboard() {
   const preparedList = rawList.map((u) => {
     const dbAvatar = dbAvatars[u.email];
     if (u.isCurrentUser) {
-      if (activeTrack === 'Global') {
-        // xp/streak come from the live backend row (u) — only cosmetic fields are refreshed locally.
-        return { ...u, name: user.username, emoji: user.emoji, customProfileImage };
-      }
-      const myTrack = trackStats[activeTrack] || { xp: 0, gold: 0 };
-      return { ...u, name: user.username, level: user.level, gold: myTrack.gold, xp: myTrack.xp, emoji: user.emoji, customProfileImage };
+      // Every track is backend-authoritative now — xp/streak come from the live row (u); only
+      // cosmetic identity fields are refreshed locally.
+      return { ...u, name: user.username, emoji: user.emoji, customProfileImage };
     }
     return {
       ...u,
@@ -342,9 +346,7 @@ export default function Leaderboard() {
                     </div>
                     <div style={{ fontWeight: 800, fontSize: '0.95rem' }}>{userItem.name}</div>
                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.25rem' }}>
-                      {activeTrack === 'Global'
-                        ? t('lbStreakDays', { count: userItem.streak || 0 })
-                        : `${t('level')} ${userItem.level} · ${trackConfig.label}`}
+                      {t('lbStreakDays', { count: userItem.streak || 0 })}
                     </div>
                     <div
                       style={{
@@ -428,9 +430,7 @@ export default function Leaderboard() {
                       )}
                     </div>
                     <div className="lb-user-level">
-                      {activeTrack === 'Global'
-                        ? t('lbStreakDays', { count: userItem.streak || 0 })
-                        : `⚔️ ${t('level')} ${userItem.level} · ${trackConfig.icon} ${trackConfig.label}`}
+                      {t('lbStreakDays', { count: userItem.streak || 0 })}
                     </div>
                   </div>
                   <div className="lb-stats">
@@ -439,17 +439,8 @@ export default function Leaderboard() {
                       <span className="lb-stat-label">{trackConfig.statLabel}</span>
                     </div>
                     <div className="lb-stat">
-                      {activeTrack === 'Global' ? (
-                        <>
-                          <span className="lb-stat-value gold">🔥 {(userItem.streak || 0).toLocaleString()}</span>
-                          <span className="lb-stat-label">{t('lbStreakStat')}</span>
-                        </>
-                      ) : (
-                        <>
-                          <span className="lb-stat-value gold">🪙 {userItem.gold.toLocaleString()}</span>
-                          <span className="lb-stat-label">{t('gold')}</span>
-                        </>
-                      )}
+                      <span className="lb-stat-value gold">🔥 {(userItem.streak || 0).toLocaleString()}</span>
+                      <span className="lb-stat-label">{t('lbStreakStat')}</span>
                     </div>
                   </div>
                 </div>

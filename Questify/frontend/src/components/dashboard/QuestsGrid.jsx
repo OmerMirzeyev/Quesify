@@ -2,6 +2,7 @@ import React, { useState, useRef, useLayoutEffect, useEffect, useMemo, useCallba
 import { useApp } from '../../context/AppContext';
 import QuestModal from './QuestModal';
 import { QUESTS_BY_CHAPTER, CHAPTER_META } from '../../data/mockData';
+import { translateChapterMeta, translateLevelTitle } from '../../i18n/contentTranslations';
 
 const LEVEL_SPACING = 165;
 const MIN_MAP_WIDTH = 320;
@@ -45,10 +46,12 @@ const MapNode = memo(function MapNode({
   completed,
   isActive,
   activeProgrammingLanguage,
+  language,
   isChestClaimed,
   onSelect,
   onClaimChest,
 }) {
+  const displayTitle = translateLevelTitle(activeProgrammingLanguage, quest.id, language, quest.title);
   const stateClass = completed
     ? 'roadmap-node-btn--completed'
     : isActive
@@ -105,7 +108,7 @@ const MapNode = memo(function MapNode({
             className="roadmap-tag-title"
             style={{ color: unlocked ? 'var(--text-primary)' : 'var(--text-muted)' }}
           >
-            {quest.title}
+            {displayTitle}
           </div>
         </div>
       </div>
@@ -147,6 +150,7 @@ export default function QuestsGrid() {
     mapProgress,
     isAdmin,
     t,
+    language,
   } = useApp();
 
   const [selectedQuest, setSelectedQuest] = useState(null);
@@ -175,6 +179,12 @@ export default function QuestsGrid() {
     [chapters, selectedChapterIdx]
   );
   const currentChapterMeta = chaptersMeta[selectedChapterIdx] || {};
+  const translatedChapterMeta = translateChapterMeta(
+    activeProgrammingLanguage,
+    selectedChapterIdx,
+    language,
+    currentChapterMeta
+  );
 
   const ch1QuestIds = chapters[0]?.map((q) => q.id) || [];
   const isCh1Completed =
@@ -323,10 +333,10 @@ export default function QuestsGrid() {
           </div>
           <div className="quests-chapter-meta-body">
             <div className="quests-chapter-meta-title">
-              {currentChapterMeta?.title}
+              {translatedChapterMeta?.title}
             </div>
             <div className="quests-chapter-meta-sub">
-              {currentChapterMeta?.subtitle}
+              {translatedChapterMeta?.subtitle}
             </div>
           </div>
           <div className="quests-chapter-meta-stats">
@@ -425,6 +435,7 @@ export default function QuestsGrid() {
                 completed={completed}
                 isActive={isActive}
                 activeProgrammingLanguage={activeProgrammingLanguage}
+                language={language}
                 isChestClaimed={claimedChests.includes(chestId)}
                 onSelect={handleSelectQuest}
                 onClaimChest={claimTreasureChest}

@@ -18,6 +18,7 @@ public class AppDbContext : DbContext
     public DbSet<Course> Courses => Set<Course>();
     public DbSet<Badge> Badges => Set<Badge>();
     public DbSet<UserBadge> UserBadges => Set<UserBadge>();
+    public DbSet<DirectMessage> DirectMessages => Set<DirectMessage>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -77,5 +78,11 @@ public class AppDbContext : DbContext
         modelBuilder.Entity<Badge>()
             .HasIndex(b => b.Code)
             .IsUnique();
+
+        modelBuilder.Entity<DirectMessage>()
+            .HasIndex(m => new { m.SenderId, m.ReceiverId });
+
+        modelBuilder.Entity<DirectMessage>()
+            .HasIndex(m => new { m.ReceiverId, m.SenderId });
     }
 }

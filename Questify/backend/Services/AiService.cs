@@ -43,25 +43,33 @@ public class AiService : IAiService
     private const string LanguageLockTemplate =
         "You are the Questify AI Mentor, an in-app assistant for Questify, a gamified " +
         "programming-learning platform. The user is currently enrolled in the {0} course. " +
-        "You may ONLY answer questions about: (1) Questify's own features — quests/levels, XP, " +
-        "gold, the shop, leaderboard, streaks, avatars, jokers, achievements, friends; and (2) " +
-        "{0} programming concepts (syntax, loops, arrays, OOP, debugging, etc.). " +
-        "STRICT LANGUAGE LOCK: every explanation and EVERY code example you give must be written " +
-        "in {0} ONLY — never show code in another language, even to compare or translate, even if " +
-        "the user explicitly asks for a different language. If asked for another language, briefly " +
-        "explain you're their dedicated {0} mentor for this quest and give the {0} equivalent instead. " +
-        "If asked about anything outside that scope — unrelated topics, other products, personal " +
-        "advice, current events, medical/legal/financial advice, etc. — politely decline in one " +
-        "short sentence and steer the conversation back to {0} or Questify. " +
+        "You may answer questions about: (1) Questify's own features — quests/levels, XP, " +
+        "gold, the shop, leaderboard, streaks, avatars, jokers, achievements, friends; (2) " +
+        "{0} programming concepts (syntax, loops, arrays, OOP, debugging, etc.); and (3) Java, " +
+        "Python, or general programming/computer-science concepts even though the user isn't " +
+        "enrolled in that course right now. " +
+        "LANGUAGE LOCK (for the user's own {0} course only): when the question is about {0} — the " +
+        "course the user is actively working through — every explanation and code example must be " +
+        "written in {0} ONLY; never substitute a different language for {0} material. " +
+        "JAVA/PYTHON/GENERAL QUESTIONS: if the user instead asks about Java, Python, or a general " +
+        "programming/CS concept, do NOT refuse and do NOT redirect them back to {0} — give a real, " +
+        "helpful, informative answer in that language (with a short code example if useful), then " +
+        "enthusiastically mention that a full interactive Questify learning path for that language " +
+        "is 'Coming Soon'! " +
+        "If asked about anything truly outside that scope — unrelated topics, other products, " +
+        "personal advice, current events, medical/legal/financial advice, etc. — politely decline " +
+        "in one short sentence and steer the conversation back to programming or Questify. " +
         "Tone: energetic, gamified, and encouraging — talk like a quest mentor guiding a hero " +
         "through their {0} adventure (light RPG flavor, occasional emoji, XP/level-up language " +
         "welcome), but stay concise and beginner-friendly above all. " +
-        "Note: the STRICT LANGUAGE LOCK above governs which PROGRAMMING language your code " +
-        "samples use ({0}) — it is separate from the natural language of your reply. " +
         LanguageMatchInstruction;
 
     // Used by GenerateQuestionAsync — forces strict JSON output so the admin panel can parse the
-    // response directly into form fields. {0}=language, {1}=topic, {2}=difficulty, {3}=random seed.
+    // response directly into form fields. {0}=language, {1}=topic, {2}=difficulty, {3}=random seed,
+    // {4}=content language (the admin's current UI language — e.g. "Azerbaijani"/"English"/"Turkish").
+    // The all-caps block at the end is deliberately blunt and repeated in different phrasings —
+    // free-tier models on OpenRouter ignore a single polite "no markdown" instruction often enough
+    // that ExtractJson (below) still has to be the real safety net, not this prompt alone.
     private const string QuestionGenerationPromptTemplate =
         "You are generating admin content for Questify, a gamified programming-learning platform. " +
         "Generate ONE completely new, unique multiple-choice coding question about the " +
@@ -69,12 +77,18 @@ public class AiService : IAiService
         "called you MUST invent a different question — vary the scenario, wording, and code shown " +
         "so it never repeats a previous answer, even for the same language/topic/difficulty. Use " +
         "this random seed only to vary your creative choice, never mention it in the output: {3}. " +
-        "Write the title, description, question text, and hint in Azerbaijani; any code shown " +
-        "inside the question must be valid {0} syntax. Provide EXACTLY 4 answer options, only one " +
-        "of which is correct. Respond with STRICT JSON ONLY — no markdown code fences, no " +
-        "commentary before or after — matching exactly this shape: " +
+        "Generate the title, description, question text, and hint STRICTLY in the following " +
+        "language: {4}. Do not mix in any other natural language for those fields. Any code shown " +
+        "inside the question must be valid {0} syntax (code syntax/keywords are never translated, " +
+        "only the surrounding natural-language text is in {4}). Provide EXACTLY 4 answer options, " +
+        "only one of which is correct — the options themselves must also be written in {4} (except " +
+        "for literal {0} code/keywords within an option). Respond matching exactly this JSON shape: " +
         "{{\"title\":\"...\",\"description\":\"...\",\"question\":\"...\"," +
-        "\"options\":[\"...\",\"...\",\"...\",\"...\"],\"correctIndex\":0,\"hint\":\"...\"}}";
+        "\"options\":[\"...\",\"...\",\"...\",\"...\"],\"correctIndex\":0,\"hint\":\"...\"}} " +
+        "RETURN ONLY VALID RAW JSON. DO NOT INCLUDE MARKDOWN CODE BLOCKS. DO NOT USE ```json OR ``` " +
+        "OF ANY KIND. DO NOT ADD ANY EXTRA TEXT, EXPLANATION, OR COMMENTARY BEFORE OR AFTER THE " +
+        "JSON. Your entire response must start with an opening curly brace and end with a closing " +
+        "curly brace and contain nothing else.";
 
     // Only these tracks have real lesson content (see CourseSeeder) — a course outside this set
     // can't actually be "enrolled in", so it's ignored rather than trusted into the prompt.
@@ -119,16 +133,21 @@ public class AiService : IAiService
         var messages = new List<object> { new { role = "system", content = systemPrompt } };
         messages.AddRange(history.TakeLast(12).Select(h => (object)new { role = h.Role, content = h.Content }));
 
-        var reply = await TryModelAsync(model, apiKey, baseUrl, messages, cancellationToken);
+        // Without a cap, a free-tier reasoning model can spend its entire generation on hidden
+        // "thinking" tokens and never finish within the per-request HttpClient timeout — same
+        // fix already applied to GenerateQuestionAsync's QuestionMaxTokens, for the same reason.
+        const int ChatMaxTokens = 600;
+
+        var reply = await TryModelAsync(model, apiKey, baseUrl, messages, cancellationToken, ChatMaxTokens);
         if (reply is not null) return reply;
 
         _logger.LogWarning("AI model {Model} was unavailable — retrying with fallback {Fallback}.", model, fallbackModel);
-        reply = await TryModelAsync(fallbackModel, apiKey, baseUrl, messages, cancellationToken);
+        reply = await TryModelAsync(fallbackModel, apiKey, baseUrl, messages, cancellationToken, ChatMaxTokens);
 
         return reply ?? "Sorry, the AI mentor is temporarily unavailable. Please try again in a moment.";
     }
 
-    public async Task<GeneratedQuestionDto?> GenerateQuestionAsync(string language, string topic, string difficulty, CancellationToken cancellationToken = default)
+    public async Task<GeneratedQuestionDto?> GenerateQuestionAsync(string language, string topic, string difficulty, string? contentLanguage = null, CancellationToken cancellationToken = default)
     {
         var settings = _configuration.GetSection("AiSettings");
         var apiKey = settings["ApiKey"];
@@ -145,27 +164,59 @@ public class AiService : IAiService
         // A fresh random seed per call nudges the model toward a genuinely different question
         // instead of the same "textbook example" for a given language/topic/difficulty combo.
         var seed = Guid.NewGuid().ToString("N")[..8];
-        var prompt = string.Format(QuestionGenerationPromptTemplate, language, topic, difficulty, seed);
+        var resolvedContentLanguage = string.IsNullOrWhiteSpace(contentLanguage) ? "Azerbaijani" : contentLanguage;
+        var prompt = string.Format(QuestionGenerationPromptTemplate, language, topic, difficulty, seed, resolvedContentLanguage);
         var messages = new List<object> { new { role = "system", content = prompt } };
 
-        var raw = await TryModelAsync(model, apiKey, baseUrl, messages, cancellationToken);
+        // Capped well above what a title+description+question+4 options+hint needs — free-tier
+        // models occasionally get truncated mid-JSON on the default token budget, which produces
+        // syntactically invalid JSON no amount of string cleaning can fix. This is the other half
+        // of the fix alongside ExtractJson below (that one handles malformed *wrapping*, this one
+        // prevents malformed *truncation*).
+        const int QuestionMaxTokens = 900;
+
+        var raw = await TryModelAsync(model, apiKey, baseUrl, messages, cancellationToken, QuestionMaxTokens);
         var parsed = raw is null ? null : ParseGeneratedQuestion(raw);
         if (parsed is not null) return parsed;
 
         _logger.LogWarning("AI question generation with {Model} failed/returned invalid JSON — retrying with {Fallback}.", model, fallbackModel);
-        raw = await TryModelAsync(fallbackModel, apiKey, baseUrl, messages, cancellationToken);
+        raw = await TryModelAsync(fallbackModel, apiKey, baseUrl, messages, cancellationToken, QuestionMaxTokens);
         return raw is null ? null : ParseGeneratedQuestion(raw);
     }
 
-    // Models occasionally wrap JSON in ```json fences despite instructions not to — strip those
-    // before parsing. Returns null (rather than throwing) on any malformed/incomplete response so
-    // the caller can transparently retry with the fallback model.
+    // Strips a leading/trailing markdown code fence (```json ... ``` or plain ``` ... ```,
+    // tolerant of casing and a missing/blank language tag), then — regardless of whether a fence
+    // was found — takes the substring between the first '{' and the last '}'. That second step is
+    // what actually makes this robust: models don't only wrap JSON in fences, they sometimes also
+    // prepend a sentence ("Sure, here's your question:") or append one, and fence-stripping alone
+    // leaves that prose in place, which is exactly why the old regex-only approach worked "once"
+    // and then failed the moment a call came back in a slightly different shape.
+    private static readonly Regex CodeFenceRegex = new(
+        @"^\s*```(?:json)?\s*|\s*```\s*$",
+        RegexOptions.IgnoreCase | RegexOptions.Multiline | RegexOptions.Compiled);
+
+    private static string ExtractJson(string raw)
+    {
+        var cleaned = CodeFenceRegex.Replace(raw, string.Empty).Trim();
+
+        var start = cleaned.IndexOf('{');
+        var end = cleaned.LastIndexOf('}');
+        if (start < 0 || end < 0 || end <= start)
+        {
+            return cleaned;
+        }
+
+        return cleaned[start..(end + 1)];
+    }
+
+    // Returns null (rather than throwing) on any malformed/incomplete response so the caller can
+    // transparently retry with the fallback model.
     private GeneratedQuestionDto? ParseGeneratedQuestion(string raw)
     {
+        var jsonText = ExtractJson(raw);
+
         try
         {
-            var jsonText = Regex.Replace(raw.Trim(), "^```(json)?|```$", string.Empty, RegexOptions.Multiline).Trim();
-
             using var doc = JsonDocument.Parse(jsonText);
             var root = doc.RootElement;
 
@@ -189,16 +240,21 @@ public class AiService : IAiService
                 && dto.Options.Count is >= 2 and <= 4
                 && dto.CorrectIndex >= 0 && dto.CorrectIndex < dto.Options.Count;
 
+            if (!isValid)
+            {
+                _logger.LogWarning("AI-generated question parsed but failed shape validation. Cleaned={Cleaned}", jsonText);
+            }
+
             return isValid ? dto : null;
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to parse AI-generated question JSON: {Raw}", raw);
+            _logger.LogWarning(ex, "Failed to parse AI-generated question JSON. Raw={Raw} Cleaned={Cleaned}", raw, jsonText);
             return null;
         }
     }
 
-    private async Task<string?> TryModelAsync(string model, string apiKey, string baseUrl, List<object> messages, CancellationToken cancellationToken)
+    private async Task<string?> TryModelAsync(string model, string apiKey, string baseUrl, List<object> messages, CancellationToken cancellationToken, int? maxTokens = null)
     {
         try
         {
@@ -210,7 +266,9 @@ public class AiService : IAiService
             // Recommended (not required) by OpenRouter to identify the calling app in their dashboard.
             request.Headers.TryAddWithoutValidation("HTTP-Referer", "https://questify.app");
             request.Headers.TryAddWithoutValidation("X-Title", "Questify AI Mentor");
-            request.Content = JsonContent.Create(new { model, messages });
+            request.Content = maxTokens is null
+                ? JsonContent.Create(new { model, messages })
+                : JsonContent.Create(new { model, messages, max_tokens = maxTokens });
 
             using var response = await http.SendAsync(request, cancellationToken);
             var body = await response.Content.ReadAsStringAsync(cancellationToken);
