@@ -80,6 +80,10 @@ public class AuthController : ControllerBase
             existingUser.LastName = model.LastName.Trim();
             existingUser.PasswordHash = _passwordHasher.HashPassword(model.Password);
             existingUser.Emoji = model.Emoji;
+            if (string.IsNullOrWhiteSpace(existingUser.Username))
+            {
+                existingUser.Username = await UsernameGenerator.GenerateUniqueAsync(_context, $"{model.FirstName} {model.LastName}");
+            }
             await _context.SaveChangesAsync();
 
             await GenerateAndSendOtpAsync(existingUser, "Email Verification");
@@ -95,6 +99,7 @@ public class AuthController : ControllerBase
         {
             FirstName = model.FirstName.Trim(),
             LastName = model.LastName.Trim(),
+            Username = await UsernameGenerator.GenerateUniqueAsync(_context, $"{model.FirstName} {model.LastName}"),
             Email = email,
             PasswordHash = _passwordHasher.HashPassword(model.Password),
             Role = "User",
@@ -162,7 +167,8 @@ public class AuthController : ControllerBase
             Role = user.Role,
             Email = user.Email,
             AvatarUrl = user.AvatarUrl,
-            Emoji = user.Emoji
+            Emoji = user.Emoji,
+            Username = user.Username
         });
     }
 
@@ -217,7 +223,8 @@ public class AuthController : ControllerBase
             Role = user.Role,
             Email = user.Email,
             AvatarUrl = user.AvatarUrl,
-            Emoji = user.Emoji
+            Emoji = user.Emoji,
+            Username = user.Username
         });
     }
 
@@ -298,10 +305,16 @@ public class AuthController : ControllerBase
         {
             // Google-only accounts still need a PasswordHash (NOT NULL) — they never use it to
             // sign in, so a random value that's never handed back to anyone is fine here.
+            var googleDisplayName = $"{tokenInfo.GivenName} {tokenInfo.FamilyName}".Trim();
             user = new User
             {
                 FirstName = string.IsNullOrWhiteSpace(tokenInfo.GivenName) ? "Questify" : tokenInfo.GivenName,
                 LastName = string.IsNullOrWhiteSpace(tokenInfo.FamilyName) ? "Player" : tokenInfo.FamilyName,
+                // Zero-friction onboarding: sanitize the Google display name straight into a unique
+                // handle (e.g. "Omer Mirzeyev" -> "omermirzeyev", or "omermirzeyev99" if taken) so
+                // there's no separate "pick a username" step — editable later from Profile Settings.
+                Username = await UsernameGenerator.GenerateUniqueAsync(
+                    _context, string.IsNullOrWhiteSpace(googleDisplayName) ? email.Split('@')[0] : googleDisplayName),
                 Email = email,
                 PasswordHash = _passwordHasher.HashPassword(Guid.NewGuid().ToString("N") + Guid.NewGuid().ToString("N")),
                 Role = "User",
@@ -330,7 +343,8 @@ public class AuthController : ControllerBase
             Role = user.Role,
             Email = user.Email,
             AvatarUrl = user.AvatarUrl,
-            Emoji = user.Emoji
+            Emoji = user.Emoji,
+            Username = user.Username
         });
     }
 
@@ -430,9 +444,24 @@ public class AuthController : ControllerBase
 
         if (model.AvatarUrl is not null) user.AvatarUrl = model.AvatarUrl;
         if (model.Emoji is not null) user.Emoji = model.Emoji;
+
+        if (model.Username is not null)
+        {
+            var sanitized = UsernameGenerator.Sanitize(model.Username);
+            if (sanitized != user.Username)
+            {
+                var taken = await _context.Users.AnyAsync(u => u.Username == sanitized && u.Id != user.Id);
+                if (taken)
+                {
+                    return Conflict(new { message = "Bu istifadəçi adı artıq mövcuddur." });
+                }
+                user.Username = sanitized;
+            }
+        }
+
         await _context.SaveChangesAsync();
 
-        return Ok(new { message = "Profil yeniləndi." });
+        return Ok(new { message = "Profil yeniləndi.", username = user.Username });
     }
 
     // POST /api/auth/heartbeat — called once per active session (right after login, and again on

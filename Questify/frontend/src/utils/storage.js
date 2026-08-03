@@ -218,7 +218,7 @@ export function saveStoredQuests(quests) {
   localStorage.setItem(STORAGE_KEYS.QUESTS, JSON.stringify(quests));
 }
 
-export function registerUser({ firstName, lastName, email, password, emoji, avatarUrl, role }) {
+export function registerUser({ firstName, lastName, email, password, emoji, avatarUrl, role, usernameOverride }) {
   const normalizedEmail = email.trim().toLowerCase();
   const users = getRegisteredUsers();
 
@@ -229,7 +229,10 @@ export function registerUser({ firstName, lastName, email, password, emoji, avat
 
   const trimmedFirst = firstName.trim();
   const trimmedLast = lastName.trim();
-  const displayName = `${trimmedFirst} ${trimmedLast}`.trim();
+  // Google Sign-In passes the backend's sanitized handle (e.g. "omermirzeyev") instead of a
+  // "FirstName LastName" display name, since the AuthResponse never carries real first/last
+  // names for that path — see AuthPage's handleGoogleCredential/completeLogin.
+  const displayName = (usernameOverride && usernameOverride.trim()) || `${trimmedFirst} ${trimmedLast}`.trim();
 
   // The backend is the source of truth for role (JWT `role` claim) — an explicit `role` passed
   // in (from the real /api/auth/login response, via completeLogin) always wins. The hardcoded

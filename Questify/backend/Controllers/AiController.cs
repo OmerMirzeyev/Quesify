@@ -13,32 +13,55 @@ namespace backend.Controllers;
 [Authorize] // logged-in only — the OpenRouter key/quota is server-side, don't expose it to anonymous callers
 public class AiController : ControllerBase
 {
+    // Hard ceiling on total request time (AiService itself bounds each of its up-to-2 model
+    // attempts to 15s each, i.e. ~30s worst case) — this is the safety net that turns a stuck
+    // upstream call into a clean 504 instead of the frontend spinner hanging indefinitely.
+    private static readonly TimeSpan RequestDeadline = TimeSpan.FromSeconds(35);
+
     private readonly IAiService _aiService;
     private readonly AppDbContext _context;
+    private readonly ILogger<AiController> _logger;
 
-    public AiController(IAiService aiService, AppDbContext context)
+    public AiController(IAiService aiService, AppDbContext context, ILogger<AiController> logger)
     {
         _aiService = aiService;
         _context = context;
+        _logger = logger;
     }
 
     [HttpPost("chat")]
-    public async Task<IActionResult> Chat([FromBody] AiChatRequestDto request)
+    public async Task<IActionResult> Chat([FromBody] AiChatRequestDto request, CancellationToken cancellationToken)
     {
         if (request?.Messages is null || request.Messages.Count == 0)
         {
             return BadRequest(new { message = "No message provided." });
         }
 
-        var history = request.Messages
-            .Where(m => m.Role is "user" or "bot")
-            .Select(m => (Role: m.Role == "bot" ? "assistant" : "user", Content: m.Content))
-            .ToList();
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(RequestDeadline);
 
-        var course = await ResolveEnrolledCourseAsync(request.Course);
+        try
+        {
+            var history = request.Messages
+                .Where(m => m.Role is "user" or "bot")
+                .Select(m => (Role: m.Role == "bot" ? "assistant" : "user", Content: m.Content))
+                .ToList();
 
-        var reply = await _aiService.AskAsync(history, course);
-        return Ok(new { reply });
+            var course = await ResolveEnrolledCourseAsync(request.Course);
+
+            var reply = await _aiService.AskAsync(history, course, cts.Token);
+            return Ok(new { reply });
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning("AI chat request exceeded the {Deadline}s deadline.", RequestDeadline.TotalSeconds);
+            return StatusCode(StatusCodes.Status504GatewayTimeout, new { message = "AI mentor request timed out. Please try again." });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error handling AI chat request.");
+            return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Something went wrong reaching the AI mentor. Please try again." });
+        }
     }
 
     // The frontend hint (Dashboard's activeProgrammingLanguage) is trusted only after it matches

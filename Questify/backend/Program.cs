@@ -1,5 +1,6 @@
 using System.Text;
 using backend.Data;
+using backend.Extensions;
 using backend.Filters;
 using backend.Hubs;
 using backend.Models;
@@ -174,6 +175,17 @@ using (var scope = app.Services.CreateScope())
         }
     }
     dbContext.SaveChanges();
+
+    // Backfills Username for rows created before that column existed (or anything else that
+    // slipped through with it blank) — a one-time no-op on every startup after the first.
+    var usersMissingUsername = dbContext.Users.Where(u => u.Username == "").ToList();
+    foreach (var userMissingUsername in usersMissingUsername)
+    {
+        var baseName = $"{userMissingUsername.FirstName} {userMissingUsername.LastName}".Trim();
+        if (string.IsNullOrWhiteSpace(baseName)) baseName = userMissingUsername.Email.Split('@')[0];
+        userMissingUsername.Username = UsernameGenerator.GenerateUniqueAsync(dbContext, baseName).GetAwaiter().GetResult();
+    }
+    if (usersMissingUsername.Count > 0) dbContext.SaveChanges();
 
     ShopSeeder.SeedIfEmpty(dbContext);
     CourseSeeder.SeedIfEmpty(dbContext);

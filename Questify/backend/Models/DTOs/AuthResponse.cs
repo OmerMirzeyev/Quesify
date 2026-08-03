@@ -11,4 +11,8 @@ public class AuthResponse
     public string? Email { get; set; }
     public string? AvatarUrl { get; set; }
     public string? Emoji { get; set; }
+
+    // Sanitized handle (see UsernameGenerator) — lets a brand-new Google sign-in seed the local
+    // profile with a real generated username instead of a generic placeholder.
+    public string? Username { get; set; }
 }

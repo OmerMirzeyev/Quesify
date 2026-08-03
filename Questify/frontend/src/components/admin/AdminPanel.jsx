@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { PlusCircle, Trash2, Minus, Plus, Infinity as InfinityIcon, Save } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { isAdminRole } from '../../utils/storage';
+import { apiFetch } from '../../utils/api';
 
 const SHOP_ITEM_TYPE_OPTS = ['avatar', 'badge', 'potion_heart', 'joker_5050', 'streak_freeze', 'double_xp', 'time_freeze', 'hint_card', 'answer_change', 'frame', 'theme'];
 
@@ -10,136 +11,6 @@ const defaultNewShopItem = {
   rarity: 'Common', game: 'Questify', gameColor: '#8b5cf6',
   gameBg: 'linear-gradient(135deg,#8b5cf622 0%,#5b21b622 100%)',
   gameBorder: 'rgba(139,92,246,0.4)', desc: '', stock: null,
-};
-
-// Rich Pool of dynamic questions based on Language + Topic + Difficulty combination
-const GENERATED_AI_QUESTIONS = {
-  'C#': {
-    Loops: {
-      Easy: {
-        question: "C# dilində 'while (x < 10)' döngüsünün 10 dəfə dövr etməsi üçün x-in başlanğıc qiyməti neçə olmalıdır (hər addımda x++ olur)?",
-        options: ["x = 0", "x = 1", "x = 10", "x = -1"],
-        correctIndex: 0,
-        hint: "x=0-dan başladıqda, i = 0, 1, ..., 9 olacaq və cəmi 10 iterasiya edəcək."
-      },
-      Medium: {
-        question: "C#-da hansı döngü növü şərt yoxlanılmadan ƏVVƏL ən azı bir dəfə mütləq işləyir?",
-        options: ["for döngüsü", "while döngüsü", "do-while döngüsü", "foreach döngüsü"],
-        correctIndex: 2,
-        hint: "do-while döngüsünün gövdəsi işlədikdən sonra while şərti yoxlanılır."
-      },
-      Hard: {
-        question: "C#-da daxili (nested) ikiqat döngü blokundan eyni anda tamamilə çıxmaq üçün ən təhlükəsiz üsul hansıdır?",
-        options: ["Sadə break; yazmaq", "goto label; ifadəsi istifadə etmək", "Boolean bayrağı (flag) istifadə edib hər iki döngüdə yoxlamaq", "return; yazaraq metodu tam bitirmək (əgər mümkündürsə)"],
-        correctIndex: 2,
-        hint: "goto məsləhət görülmür. Ən yaxşı OOP üsulu flag dəyişəni ilə idarə etməkdir."
-      }
-    },
-    Variables: {
-      Easy: {
-        question: "C#-da tam ədədləri (məsələn: 42, -99) saxlamaq üçün ən çox istifadə edilən 32-bitlik məlumat tipi hansıdır?",
-        options: ["byte", "short", "int", "long"],
-        correctIndex: 2,
-        hint: "'int' tipi 32-bitlik signed integer ifadə edir."
-      },
-      Medium: {
-        question: "C# dilində dəyişənin tipini proqramçının yazmasına ehtiyac duymadan, təyin edilən dəyərə görə avtomatik çıxaran açar söz hansıdır?",
-        options: ["dynamic", "var", "auto", "object"],
-        correctIndex: 1,
-        hint: "var açar sözü 'Implicitly typed local variables' yaratmağa imkan verir."
-      },
-      Hard: {
-        question: "C#-da 'readonly' və 'const' arasındakı əsas fərq nədir?",
-        options: ["const yalnız runtime-da dəyişə bilir", "const compile-time sabitidir, readonly isə runtime zamanı (məs: konstruktorda) təyin edilə bilər", "Heç bir fərqləri yoxdur", "readonly yalnız static siniflərdə keçərlidir"],
-        correctIndex: 1,
-        hint: "const dəyəri təyin olunduqda birbaşa kodun içinə köçürülür, readonly isə konstruktorda dəyişdirilə bilir."
-      }
-    },
-    OOP: {
-      Easy: {
-        question: "C#-da bir sinifdən (class) miras almaq üçün sinif adından sonra hansı simvol yazılır?",
-        options: [":", "->", "extends", "inherits"],
-        correctIndex: 0,
-        hint: "class Dog : Animal sintaksisi varislik bildirmək üçündür."
-      },
-      Medium: {
-        question: "C# proqramlaşdırma dilində eyni metod adının fərqli parametr tipləri ilə təkrar təyin edilməsi nə adlanır?",
-        options: ["Method Overriding", "Method Overloading", "Method Hiding", "Polymorphism"],
-        correctIndex: 1,
-        hint: "Method Overloading eyni adda, lakin fərqli imzaya sahib metodlar deməkdir."
-      },
-      Hard: {
-        question: "C#-da interfeys (interface) daxilindəki metodların standart olaraq access modifier-i hansıdır?",
-        options: ["private", "protected", "public", "internal"],
-        correctIndex: 2,
-        hint: "İnterfeys üzvləri standart olaraq public qəbul edilir və gövdəsi olmur."
-      }
-    }
-  },
-  Java: {
-    Loops: {
-      Easy: {
-        question: "Java-da 'for (int i = 0; i < 5; i++)' döngüsü neçə dəfə dövr edəcək?",
-        options: ["4", "5", "6", "Sonsuz"],
-        correctIndex: 1,
-        hint: "i = 0, 1, 2, 3, 4 olduqda şərt doğrudur. Cəmi 5 iterasiya."
-      },
-      Medium: {
-        question: "Java-da hansı açar söz döngünün yalnız cari iterasiyasını dayandırır və növbəti iterasiyaya keçir?",
-        options: ["break", "continue", "return", "exit"],
-        correctIndex: 1,
-        hint: "continue ifadəsi aşağıdakı kodları icra etmədən döngünün başına qayıdır."
-      },
-      Hard: {
-        question: "Java-da döngüləri etiketləmək (labeled loops) və daxili döngüdən xarici döngünü kəsmək (break outer) mümkündürmü?",
-        options: ["Xeyr, yalnız C++ dilində mümkündür", "Bəli, 'break labelName;' yazmaqla mümkündür", "Yalnız switch bloklarında mümkündür", "Yalnız xüsusi kitabxanalar ilə mümkündür"],
-        correctIndex: 1,
-        hint: "Java etiketli break/continue dəstəkləyir: 'outerLoop: for(...)' şəklində."
-      }
-    },
-    Collections: {
-      Easy: {
-        question: "Java-da ölçüsü dinamik olaraq avtomatik böyüyən standart massiv kolleksiyası hansıdır?",
-        options: ["Array[]", "ArrayList", "HashMap", "HashSet"],
-        correctIndex: 1,
-        hint: "ArrayList avtomatik genişlənən massiv strukturudur."
-      },
-      Medium: {
-        question: "Java-da açar-dəyər (key-value) cütlərini unikal şəkildə saxlamaq üçün ən uyğun kolleksiya sinfi hansıdır?",
-        options: ["ArrayList", "Vector", "HashMap", "LinkedHashSet"],
-        correctIndex: 2,
-        hint: "HashMap sinfi açarların unikal olmasını və O(1) axtarış müddətini təmin edir."
-      },
-      Hard: {
-        question: "Java-da 'Fail-Fast' və 'Fail-Safe' iteratorları arasındakı əsas fərq nədir?",
-        options: ["Heç bir fərqləri yoxdur", "Fail-Fast iterasiya zamanı kolleksiya dəyişdirilərsə ConcurrentModificationException atır; Fail-Safe isə kopya üzərində işləyir", "Fail-Safe exception atır", "Yalnız massivlərdə işləyirlər"],
-        correctIndex: 1,
-        hint: "ArrayList standart olaraq fail-fast-dir. ConcurrentHashMap isə fail-safe iterator qaytarır."
-      }
-    }
-  },
-  Python: {
-    Lists: {
-      Easy: {
-        question: "Python dilində listə (siyahıya) yeni bir element əlavə etmək üçün hansı metod istifadə olunur?",
-        options: ["add()", "push()", "append()", "insert()"],
-        correctIndex: 2,
-        hint: "my_list.append(item) elementi siyahının sonuna əlavə edir."
-      },
-      Medium: {
-        question: "Python-da list slicing istifadə edərək 'my_list = [10, 20, 30, 40]' siyahısından '[20, 30]' alt-siyahısını almaq üçün hansı yazılış doğrudur?",
-        options: ["my_list[1:3]", "my_list[1:2]", "my_list[2:3]", "my_list[0:2]"],
-        correctIndex: 0,
-        hint: "Slicing zamanı start indeksi daxil, stop indeksi isə daxil deyil: [1:3] yazdıqda 1-ci və 2-ci elementlər götürülür."
-      },
-      Hard: {
-        question: "Python-da 'list comprehension' istifadə edərək [0, 2, 4, 6, 8] siyahısını yaratmaq üçün hansı tək sətirlik ifadə doğrudur?",
-        options: ["[x for x in range(5)]", "[x*2 for x in range(5)]", "[x*2 for x in range(10) if x % 2 == 0]", "[x for x in range(10) if x % 2 == 0]"],
-        correctIndex: 1,
-        hint: "range(5) 0-dan 4-ə qədərdir. Hər element 2-yə vurularaq listə yığılır."
-      }
-    }
-  }
 };
 
 export default function AdminPanel() {
@@ -226,71 +97,63 @@ export default function AdminPanel() {
     hint: ''
   });
 
-  // AI Generator loading states
-  const [aiWizardStep, setAiWizardStep] = useState(null); // null | 1 | 2 | 3 | 4 | 5
+  // AI Generator loading state — real backend call now (POST /api/admin/generate-question),
+  // replacing the old client-side static template pool.
+  const [aiWizardLoading, setAiWizardLoading] = useState(false);
+  const [aiWizardError, setAiWizardError] = useState('');
   const [aiWizardTopic, setAiWizardTopic] = useState('Loops');
   const [aiWizardDifficulty, setAiWizardDifficulty] = useState('Easy'); // 'Easy' | 'Medium' | 'Hard'
   const [aiWizardLang, setAiWizardLang] = useState('C#');
 
-  const triggerAiGenerate = () => {
-    // Start step-by-step visual animation wizard
-    setAiWizardStep(1);
-    
-    // Step 1: Analyzing (500ms)
-    setTimeout(() => {
-      setAiWizardStep(2);
-      
-      // Step 2: Evaluating difficulty (500ms)
-      setTimeout(() => {
-        setAiWizardStep(3);
-        
-        // Step 3: Compiling options (500ms)
-        setTimeout(() => {
-          setAiWizardStep(4);
-          
-          // Step 4: Finalizing hints (500ms)
-          setTimeout(() => {
-            setAiWizardStep(5);
-            
-            // Finalize: Populate form and close overlay
-            setTimeout(() => {
-              // Retrieve question from templates pool or fallback
-              const langPool = GENERATED_AI_QUESTIONS[aiWizardLang] || GENERATED_AI_QUESTIONS['C#'];
-              const topicPool = langPool[aiWizardTopic] || langPool['Loops'];
-              const difficultyKey = aiWizardDifficulty === 'Easy' ? 'Easy' : aiWizardDifficulty === 'Medium' ? 'Medium' : 'Hard';
-              const generated = topicPool[difficultyKey] || topicPool['Easy'];
+  const triggerAiGenerate = async () => {
+    if (aiWizardLoading) return;
+    setAiWizardError('');
+    setAiWizardLoading(true);
 
-              const displayDifficulty = aiWizardDifficulty === 'Easy' ? 'Asan' : aiWizardDifficulty === 'Medium' ? 'Orta' : 'Çətin';
-              const xpReward = aiWizardDifficulty === 'Easy' ? 100 : aiWizardDifficulty === 'Medium' ? 150 : 200;
-              const goldReward = aiWizardDifficulty === 'Easy' ? 50 : aiWizardDifficulty === 'Medium' ? 75 : 100;
-              const defaultIcon = aiWizardTopic === 'Loops' ? '🔄' : aiWizardTopic === 'OOP' ? '🏛️' : aiWizardTopic === 'Lists' ? '📝' : '📦';
+    try {
+      // Longer than the backend's own 45s deadline (AdminController.AiRequestDeadline) so a
+      // clean timeout error from the server has a chance to arrive before the client gives up.
+      const { ok, data } = await apiFetch('/api/admin/generate-question', {
+        method: 'POST',
+        auth: true,
+        body: { language: aiWizardLang, topic: aiWizardTopic, difficulty: aiWizardDifficulty },
+        timeoutMs: 48000,
+      });
 
-              setQuestForm(prev => ({
-                ...prev,
-                targetLanguage: aiWizardLang,
-                targetLevelId: '', // create new level
-                title: `${aiWizardLang} — ${aiWizardTopic} Sintaksisi`,
-                topic: aiWizardTopic,
-                difficulty: displayDifficulty,
-                xpReward,
-                goldReward,
-                icon: defaultIcon,
-                description: `Süni İntellekt tərəfindən yaradılmış ${aiWizardDifficulty.toLowerCase()} səviyyəli ${aiWizardLang} tapşırığı.`,
-                question: generated.question,
-                optionA: generated.options[0] || '',
-                optionB: generated.options[1] || '',
-                optionC: generated.options[2] || '',
-                optionD: generated.options[3] || '',
-                correctIndex: generated.correctIndex,
-                hint: generated.hint
-              }));
-              
-              setAiWizardStep(null); // Close wizard
-            }, 600);
-          }, 500);
-        }, 500);
-      }, 500);
-    }, 500);
+      if (!ok || !data?.question) {
+        setAiWizardError(data?.message || 'AI sual yarada bilmədi. Zəhmət olmasa yenidən cəhd edin.');
+        return;
+      }
+
+      const displayDifficulty = aiWizardDifficulty === 'Easy' ? 'Asan' : aiWizardDifficulty === 'Medium' ? 'Orta' : 'Çətin';
+      const xpReward = aiWizardDifficulty === 'Easy' ? 100 : aiWizardDifficulty === 'Medium' ? 150 : 200;
+      const goldReward = aiWizardDifficulty === 'Easy' ? 50 : aiWizardDifficulty === 'Medium' ? 75 : 100;
+      const defaultIcon = aiWizardTopic === 'Loops' ? '🔄' : aiWizardTopic === 'OOP' ? '🏛️' : aiWizardTopic === 'Lists' ? '📝' : '📦';
+
+      setQuestForm(prev => ({
+        ...prev,
+        targetLanguage: aiWizardLang,
+        targetLevelId: '', // create new level
+        title: data.title || `${aiWizardLang} — ${aiWizardTopic} Sintaksisi`,
+        topic: aiWizardTopic,
+        difficulty: displayDifficulty,
+        xpReward,
+        goldReward,
+        icon: defaultIcon,
+        description: data.description || `Süni İntellekt tərəfindən yaradılmış ${aiWizardDifficulty.toLowerCase()} səviyyəli ${aiWizardLang} tapşırığı.`,
+        question: data.question,
+        optionA: data.options?.[0] || '',
+        optionB: data.options?.[1] || '',
+        optionC: data.options?.[2] || '',
+        optionD: data.options?.[3] || '',
+        correctIndex: data.correctIndex ?? 0,
+        hint: data.hint || 'Sualı diqqətlə oxuyun.'
+      }));
+    } catch {
+      setAiWizardError('Bağlantı kəsildi. Zəhmət olmasa yenidən cəhd edin.');
+    } finally {
+      setAiWizardLoading(false);
+    }
   };
 
   const handleQuestSubmit = (e) => {
@@ -565,11 +428,18 @@ export default function AdminPanel() {
                 id="admin-ai-generate-btn"
                 className="btn btn-primary"
                 onClick={triggerAiGenerate}
-                style={{ alignSelf: 'flex-end', height: '38px', fontWeight: 800, padding: '0 1.25rem', boxShadow: 'var(--glow-purple)' }}
+                disabled={aiWizardLoading}
+                style={{ alignSelf: 'flex-end', height: '38px', fontWeight: 800, padding: '0 1.25rem', boxShadow: 'var(--glow-purple)', opacity: aiWizardLoading ? 0.7 : 1, cursor: aiWizardLoading ? 'wait' : 'pointer' }}
               >
-                🤖 AI İlə Yarat
+                {aiWizardLoading ? '🤖 Generasiya olunur...' : '🤖 AI İlə Yarat'}
               </button>
             </div>
+
+            {aiWizardError && (
+              <div style={{ color: 'var(--accent-red)', fontSize: '0.78rem', fontWeight: 600 }}>
+                ⚠️ {aiWizardError}
+              </div>
+            )}
           </div>
 
           {/* Programming Track Selector */}
@@ -977,11 +847,11 @@ export default function AdminPanel() {
         </div>
       )}
 
-      {/* ── AI Generator Step Wizard Overlay ── */}
-      {aiWizardStep !== null && (
+      {/* ── AI Generator Loading Overlay ── */}
+      {aiWizardLoading && (
         <div className="modal-overlay" style={{ zIndex: 11000, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-          <div className="modal-content" style={{ maxWidth: '400px', textAlign: 'center', padding: '2rem' }}>
-            
+          <div className="modal-content" style={{ maxWidth: '360px', textAlign: 'center', padding: '2rem' }}>
+
             {/* Loading animation block */}
             <div style={{ position: 'relative', width: '80px', height: '80px', margin: '0 auto 1.5rem' }}>
               <div style={{
@@ -996,30 +866,9 @@ export default function AdminPanel() {
               </div>
             </div>
 
-            <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', marginBottom: '1.25rem' }}>AI sual yaradır...</h3>
-            
-            {/* Step list sequence */}
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', textAlign: 'left', background: 'var(--bg-input)', padding: '1rem', borderRadius: '8px', border: '1px solid var(--border-color)' }}>
-              <div style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: aiWizardStep >= 1 ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                <span>{aiWizardStep > 1 ? '✅' : aiWizardStep === 1 ? '⚡' : '⚪'}</span>
-                <span style={{ fontWeight: aiWizardStep === 1 ? 700 : 500 }}>Dil sintaksis şablonları oxunur...</span>
-              </div>
-              <div style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: aiWizardStep >= 2 ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                <span>{aiWizardStep > 2 ? '✅' : aiWizardStep === 2 ? '⚡' : '⚪'}</span>
-                <span style={{ fontWeight: aiWizardStep === 2 ? 700 : 500 }}>Mövzu ({aiWizardTopic}) təhlil edilir...</span>
-              </div>
-              <div style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: aiWizardStep >= 3 ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                <span>{aiWizardStep > 3 ? '✅' : aiWizardStep === 3 ? '⚡' : '⚪'}</span>
-                <span style={{ fontWeight: aiWizardStep === 3 ? 700 : 500 }}>Cavab variantları tərtib edilir...</span>
-              </div>
-              <div style={{ fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.5rem', color: aiWizardStep >= 4 ? 'var(--text-primary)' : 'var(--text-muted)' }}>
-                <span>{aiWizardStep > 4 ? '✅' : aiWizardStep === 4 ? '⚡' : '⚪'}</span>
-                <span style={{ fontWeight: aiWizardStep === 4 ? 700 : 500 }}>Mükəmməl izahat və ipucu yazılır...</span>
-              </div>
-            </div>
-            
-            <p style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '1rem', fontStyle: 'italic' }}>
-              İstifadə olunan model: GPT-4 & Roslyn Compiler Simulator
+            <h3 style={{ fontFamily: 'var(--font-display)', fontSize: '1.2rem', marginBottom: '0.5rem' }}>AI sual yaradır...</h3>
+            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>
+              {aiWizardLang} · {aiWizardTopic} · {aiWizardDifficulty}
             </p>
           </div>
         </div>

@@ -5,6 +5,11 @@ public class User
     public int Id { get; set; }
     public string FirstName { get; set; } = string.Empty;
     public string LastName { get; set; } = string.Empty;
+
+    // Sanitized, unique handle (lowercase, no spaces/diacritics) — auto-generated at registration
+    // (from FirstName+LastName) or Google sign-in (from the Google display name), with a numeric
+    // suffix appended on collision. Editable later from the Profile Settings page.
+    public string Username { get; set; } = string.Empty;
     public string Email { get; set; } = string.Empty;
     public string PasswordHash { get; set; } = string.Empty;
     public string Role { get; set; } = "User";

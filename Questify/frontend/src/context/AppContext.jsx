@@ -667,8 +667,8 @@ export const AppProvider = ({ children }) => {
     setTimeout(() => setToast(null), 3000);
   };
 
-  const register = ({ firstName, lastName, email, password, emoji, avatarUrl, role }) => {
-    const result = registerUser({ firstName, lastName, email, password, emoji, avatarUrl, role });
+  const register = ({ firstName, lastName, email, password, emoji, avatarUrl, role, usernameOverride }) => {
+    const result = registerUser({ firstName, lastName, email, password, emoji, avatarUrl, role, usernameOverride });
     if (!result.ok) return result;
     // Show welcome bonus toast after a small delay (caller handles modal close)
     setTimeout(() => {
@@ -1044,11 +1044,30 @@ export const AppProvider = ({ children }) => {
     setActiveAvatarUrl(item?.emoji ?? user.emoji);
   };
 
-  const updateUsername = (newName) => {
+  const updateUsername = async (newName) => {
     const trimmed = newName.trim();
     if (!trimmed) return false;
-    setUser((prev) => ({ ...prev, username: trimmed }));
-    return true;
+
+    try {
+      const { ok, data } = await apiFetch('/api/auth/update-profile', {
+        method: 'POST',
+        auth: true,
+        body: { username: trimmed },
+      });
+
+      if (!ok) {
+        showToast(data?.message || 'İstifadəçi adı yenilənmədi.', '❌');
+        return false;
+      }
+
+      const finalUsername = data?.username || trimmed;
+      setUser((prev) => ({ ...prev, username: finalUsername }));
+      if (sessionEmail) updateRegisteredUserByEmail(sessionEmail, { username: finalUsername });
+      return true;
+    } catch {
+      showToast('Əlaqə xətası', '❌');
+      return false;
+    }
   };
 
   const addFailedQuestion = (questId, questionObj) => {

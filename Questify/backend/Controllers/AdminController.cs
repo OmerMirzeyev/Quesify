@@ -1,6 +1,7 @@
 using backend.Data;
 using backend.Extensions;
 using backend.Models;
+using backend.Models.DTOs;
 using backend.Services;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
@@ -15,13 +16,62 @@ public class AdminController : ControllerBase
 {
     private static readonly string[] AllowedRoles = { "Admin", "User" };
 
+    // Same deadline strategy as AiController.Chat — bounds the worst case (2 model attempts *
+    // 15s each) so the admin's "Generate with AI" button never spins forever.
+    private static readonly TimeSpan AiRequestDeadline = TimeSpan.FromSeconds(35);
+
     private readonly AppDbContext _context;
     private readonly INotificationService _notifications;
+    private readonly IAiService _aiService;
+    private readonly ILogger<AdminController> _logger;
 
-    public AdminController(AppDbContext context, INotificationService notifications)
+    public AdminController(AppDbContext context, INotificationService notifications, IAiService aiService, ILogger<AdminController> logger)
     {
         _context = context;
         _notifications = notifications;
+        _aiService = aiService;
+        _logger = logger;
+    }
+
+    // POST /api/admin/generate-question — used by the Admin Panel's "Generate with AI" button to
+    // populate the question-creation form with a unique, randomized AI-written question instead
+    // of an admin having to write one by hand.
+    [HttpPost("generate-question")]
+    public async Task<IActionResult> GenerateQuestion([FromBody] GenerateQuestionRequestDto request, CancellationToken cancellationToken)
+    {
+        if (request is null
+            || string.IsNullOrWhiteSpace(request.Language)
+            || string.IsNullOrWhiteSpace(request.Topic)
+            || string.IsNullOrWhiteSpace(request.Difficulty))
+        {
+            return BadRequest(new { message = "Dil, mövzu və çətinlik səviyyəsi tələb olunur." });
+        }
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(AiRequestDeadline);
+
+        try
+        {
+            var generated = await _aiService.GenerateQuestionAsync(
+                request.Language.Trim(), request.Topic.Trim(), request.Difficulty.Trim(), cts.Token);
+
+            if (generated is null)
+            {
+                return StatusCode(StatusCodes.Status502BadGateway, new { message = "AI sual yarada bilmədi. Zəhmət olmasa yenidən cəhd edin." });
+            }
+
+            return Ok(generated);
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning("AI question generation exceeded the {Deadline}s deadline.", AiRequestDeadline.TotalSeconds);
+            return StatusCode(StatusCodes.Status504GatewayTimeout, new { message = "AI sorğusu vaxt aşımına uğradı. Yenidən cəhd edin." });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error generating AI question.");
+            return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Gözlənilməz xəta baş verdi." });
+        }
     }
 
     [HttpGet("dashboard")]

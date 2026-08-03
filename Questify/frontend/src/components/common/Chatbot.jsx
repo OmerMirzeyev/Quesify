@@ -61,7 +61,7 @@ Maraqlı sualdır! Mentor olaraq sizə tövsiyəm, bu mövzunu praktiki kod yaza
 }
 
 export default function Chatbot() {
-  const { isChatbotOpen, setIsChatbotOpen, chatbotMessages, setChatbotMessages, chatbotAlert, activeProgrammingLanguage } = useApp();
+  const { isChatbotOpen, setIsChatbotOpen, chatbotMessages, setChatbotMessages, chatbotAlert, activeProgrammingLanguage, showToast } = useApp();
   const [inputValue, setInputValue] = useState('');
   const [isTyping, setIsTyping] = useState(false);
   const chatEndRef = useRef(null);
@@ -89,16 +89,31 @@ export default function Chatbot() {
         .slice(-12)
         .map((m) => ({ role: m.sender, content: m.text }));
 
-      const { ok, data } = await apiFetch('/api/ai/chat', {
+      // Slightly longer than the backend's own 35s deadline (AiController.RequestDeadline) so a
+      // clean 504 from the server has a chance to arrive before the client gives up on its own.
+      const { ok, status, data } = await apiFetch('/api/ai/chat', {
         method: 'POST',
         auth: true,
         body: { messages: history, course: activeProgrammingLanguage },
+        timeoutMs: 48000,
       });
 
-      const reply = ok && data?.reply ? data.reply : getFallbackResponse(query);
-      setChatbotMessages((prev) => [...prev, { sender: 'bot', text: reply }]);
+      if (ok && data?.reply) {
+        setChatbotMessages((prev) => [...prev, { sender: 'bot', text: data.reply }]);
+      } else if (status === 504 || status === 500 || status === 502) {
+        // A clean error code from the backend (timeout/unexpected failure) — surface it via a
+        // toast so the user notices, instead of silently swapping in a canned answer.
+        showToast('AI ilə əlaqə kəsildi, yenidən cəhd edin.', '❌');
+      } else {
+        // Backend responded but couldn't produce a reply (e.g. AI provider misconfigured) —
+        // degrade gracefully with a canned mentor tip instead of a scary error.
+        setChatbotMessages((prev) => [...prev, { sender: 'bot', text: getFallbackResponse(query) }]);
+      }
     } catch {
-      setChatbotMessages((prev) => [...prev, { sender: 'bot', text: getFallbackResponse(query) }]);
+      // The request itself failed or timed out (network drop, server unreachable, hung
+      // connection) — surface this distinctly so the user knows to retry, instead of silently
+      // swapping in a canned answer that looks like a real reply.
+      showToast('AI ilə əlaqə kəsildi, yenidən cəhd edin.', '❌');
     } finally {
       setIsTyping(false);
     }

@@ -236,7 +236,7 @@ export default function AuthPage() {
      response (same shape/logic that used to run after OTP verification). ── */
   // `emailOverride`/`passwordOverride` let Google Sign-In (which has no login-form fields to
   // read from) drive the exact same local-account bookkeeping as a normal password login.
-  const completeLogin = (data, emailOverride, passwordOverride) => {
+  const completeLogin = (data, emailOverride, passwordOverride, usernameOverride) => {
     const { role, avatarUrl, emoji } = data;
     setAuthSession({ token: data.token, role: data.role, expiration: data.expiration });
 
@@ -254,6 +254,10 @@ export default function AuthPage() {
         emoji: role === 'Admin' ? '🛡️' : (emoji || '🎮'),
         avatarUrl: avatarUrl || '',
         role,
+        // Google Sign-In: seed the profile with the backend's sanitized handle (e.g.
+        // "omermirzeyev") straight away instead of a generic placeholder — zero-friction
+        // onboarding, no separate "pick a username" step. Editable later on Profile Settings.
+        usernameOverride,
       });
     } else if (isAdminRole(role) !== isAdminRole(localUser.role)) {
       // Self-heal: the backend's JWT role is authoritative. If this browser's cached local
@@ -294,7 +298,7 @@ export default function AuthPage() {
       // Local-only mirror password — never sent anywhere, just keeps the localStorage auth
       // mirror (see storage.js authenticateUser) consistent across repeated Google sign-ins.
       const localPassword = `google-oauth:${data.token.slice(-32)}`;
-      completeLogin(data, data.email, localPassword);
+      completeLogin(data, data.email, localPassword, data.username);
     } catch {
       setError(t('errServerUnreachable'));
     } finally {

@@ -7,4 +7,5 @@ public class UpdateProfileModel
     // anyone else's profile).
     public string? AvatarUrl { get; set; }
     public string? Emoji { get; set; }
+    public string? Username { get; set; }
 }

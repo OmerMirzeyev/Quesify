@@ -56,12 +56,14 @@ export default function ProfilePage() {
     reader.readAsDataURL(file);
   };
 
-  const handleSaveUsername = () => {
+  const handleSaveUsername = async () => {
     const trimmed = usernameInput.trim();
     if (!trimmed) return;
-    updateUsername(trimmed);
-    setSaveSuccess(true);
-    setTimeout(() => setSaveSuccess(false), 2200);
+    const ok = await updateUsername(trimmed);
+    if (ok) {
+      setSaveSuccess(true);
+      setTimeout(() => setSaveSuccess(false), 2200);
+    }
   };
 
   const handleEquip = () => {
