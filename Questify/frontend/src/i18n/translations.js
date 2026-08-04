@@ -573,6 +573,18 @@ export const translations = {
     adminXpRewardLabel: "XP Ödülü",
     adminGoldRewardLabel: "Altın Ödülü",
     adminShopEmptyMsg: "Mağaza boş.",
+
+    // Shop chrome
+    shopNewItemBtn: "Yeni Eşya",
+    shopEquipBtn: "Kuşan",
+    shopEquippedBtn: "Kuşanıldı",
+    shopOutOfStock: "Stokta yok",
+    shopDeleteConfirmTitle: "Eşyayı Sil?",
+    shopDeleteConfirmBody: "Bu eşyayı mağazadan silmek istediğinizden emin misiniz?",
+    adminShopTabLabel: "🛒 Mağaza Yönetimi",
+    adminShopSectionTitle: "🛒 Mağaza Eşyaları",
+    adminShopSectionSubtitle: "Stoku ayarlayın, fiyat/açıklamayı düzenleyin, yeni eşya ekleyin veya silin.",
+
     adminColItem: "Eşya",
     adminColType: "Tür",
     adminColPrice: "Fiyat",

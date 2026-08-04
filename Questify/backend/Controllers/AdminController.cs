@@ -52,12 +52,16 @@ public class AdminController : ControllerBase
 
         try
         {
-            var generated = await _aiService.GenerateQuestionAsync(
+            var (generated, debugError) = await _aiService.GenerateQuestionAsync(
                 request.Language.Trim(), request.Topic.Trim(), request.Difficulty.Trim(),
                 request.ContentLanguage?.Trim(), cts.Token);
 
             if (generated is null)
             {
+                // Caught silently from the user's perspective — the exact upstream failure reason
+                // only ever goes to the server log so a flaky free-tier model/rate-limit is
+                // distinguishable from a real bug without ever surfacing raw text to the admin.
+                _logger.LogError("AI question generation failed — raw reason: {DebugError}", debugError);
                 return StatusCode(StatusCodes.Status502BadGateway, new { message = "AI sual yarada bilmədi. Zəhmət olmasa yenidən cəhd edin." });
             }
 

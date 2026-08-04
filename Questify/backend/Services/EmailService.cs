@@ -66,7 +66,6 @@ public class EmailService : IEmailService
         {
             // Never let a mail-server hiccup block the OTP flow — the code is already saved
             // server-side, so fall back to the dev log the same way an unconfigured SMTP would.
-            Console.WriteLine($"SMTP ERROR: {ex.Message}");
             _logger.LogWarning(ex,
                 "Failed to send {Purpose} email to {Email}; logging code instead. Code={Code}",
                 purpose, toEmail, code);

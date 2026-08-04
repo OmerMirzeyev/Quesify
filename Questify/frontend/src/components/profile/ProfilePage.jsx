@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { Image, Upload, CheckCircle2, Trash2, AlertCircle } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 import { shopItems } from '../../data/mockData';
 
@@ -219,16 +220,17 @@ export default function ProfilePage() {
               {saveSuccess ? '✅ ' + t('profileSaved') : '💾 ' + t('profileSaveBtn')}
             </button>
 
-            {/* ─── Custom Photo Upload ─── */}
-            <div style={{
-              border: '1px dashed rgba(139,92,246,0.45)',
-              borderRadius: 'var(--radius)',
-              padding: '1rem',
-              background: 'rgba(139,92,246,0.04)',
-              display: 'flex', flexDirection: 'column', gap: '0.6rem', alignItems: 'center'
-            }}>
+            {/* ─── Custom Photo Upload — dark glassmorphism card, no dashed border ─── */}
+            <div
+              className="profile-photo-upload-card"
+              style={{
+                borderRadius: 'var(--radius)',
+                padding: '1rem',
+                display: 'flex', flexDirection: 'column', gap: '0.6rem', alignItems: 'center'
+              }}
+            >
               <div style={{ fontWeight: 700, fontSize: '0.82rem', color: 'var(--accent-purple-light)', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
-                <span>📷</span> Xüsusi Profil Şəkli Yüklə
+                <Image size={15} /> Xüsusi Profil Şəkli Yüklə
               </div>
               <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--text-muted)', textAlign: 'center' }}>
                 PNG, JPG, WEBP — maks. 5MB. Şəkil dərhal profilinizə tətbiq edilir.
@@ -249,7 +251,7 @@ export default function ProfilePage() {
                 onMouseEnter={e => e.currentTarget.style.filter = 'brightness(1.15)'}
                 onMouseLeave={e => e.currentTarget.style.filter = 'none'}
               >
-                📁 Şəkil Seç
+                <Upload size={14} /> Şəkil Seç
               </label>
               <input
                 id="profile-photo-upload"
@@ -259,17 +261,22 @@ export default function ProfilePage() {
                 onChange={handleImageUpload}
               />
               {uploadError && (
-                <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--accent-red)', fontWeight: 600 }}>⚠️ {uploadError}</p>
+                <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--accent-red)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                  <AlertCircle size={13} /> {uploadError}
+                </p>
               )}
               {customProfileImage && (
-                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                  <span style={{ fontSize: '0.72rem', color: 'var(--accent-green)', fontWeight: 700 }}>✅ Şəkil tətbiq edildi!</span>
+                <div style={{ width: '100%', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', padding: '0.4rem 0.15rem' }}>
+                  <span style={{ fontSize: '0.72rem', color: 'var(--accent-green)', fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
+                    <CheckCircle2 size={14} /> Şəkil tətbiq edildi
+                  </span>
                   <button
                     type="button"
-                    style={{ background: 'none', color: 'var(--accent-red)', fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', border: 'none' }}
+                    className="profile-photo-remove-btn"
+                    style={{ fontSize: '0.72rem', fontWeight: 700, cursor: 'pointer', borderRadius: '100px', padding: '0.3rem 0.65rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
                     onClick={clearCustomProfilePhoto}
                   >
-                    ✕ Sil
+                    <Trash2 size={13} /> Sil
                   </button>
                 </div>
               )}

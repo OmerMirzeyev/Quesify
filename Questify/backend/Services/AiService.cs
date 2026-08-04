@@ -24,17 +24,36 @@ public class AiService : IAiService
         "and syntax stay in the programming language itself, but all of your own explanations, " +
         "comments, and encouragement must be in the user's language.";
 
+    // Shared by both prompt variants below — draws the line between the three fully-supported
+    // languages (comprehensive help, no caveats) and everything else (still a real, helpful
+    // answer, but tagged with a friendly "Coming Soon" heads-up so the user isn't misled into
+    // thinking Questify already has a full interactive course for it).
+    private const string ComingSoonInstruction =
+        "TECHNOLOGY SCOPE: Questify's primary, fully-supported languages — with complete " +
+        "interactive courses, quizzes, and quests — are C#, Java, and Python. Give comprehensive, " +
+        "expert-level help for these three, no caveats needed. If the user asks about any OTHER " +
+        "programming technology (e.g. HTML, CSS, JavaScript/TypeScript, SQL, DevOps, Docker, Git, " +
+        "CI/CD, PHP, Ruby, Go, Rust, Swift, Kotlin, React, Angular, Vue, cloud platforms, etc.), " +
+        "still give a real, accurate, helpful answer — with a short code example if useful — never " +
+        "refuse and never redirect them back to C#/Java/Python. Instead, ALWAYS end that reply " +
+        "with a short, friendly, enthusiastic note, translated into the exact same language as the " +
+        "rest of your reply, equivalent in meaning to: \"💡 Note: Full interactive learning paths " +
+        "and quizzes for this technology are Coming Soon ('Çox Yaxında') to Questify!\". Never " +
+        "append this note when the question is about C#, Java, Python, or Questify's own app " +
+        "features — only for other technologies.";
+
     private const string BaseSystemPrompt =
         "You are the Questify AI Mentor, an in-app assistant for Questify, a gamified " +
         "programming-learning platform. You may ONLY answer questions about: (1) Questify's own " +
         "features — quests/levels, XP, gold, the shop, leaderboard, streaks, avatars, jokers, " +
-        "achievements, friends; (2) the courses Questify teaches — C#, Java, Python, SQL, C++, " +
-        "and React; and (3) general programming/computer-science concepts related to those " +
-        "languages (syntax, loops, arrays, OOP, debugging, etc.). " +
+        "achievements, friends; (2) any programming/software-development technology — languages, " +
+        "frameworks, tools, databases, DevOps, etc.; and (3) general programming/computer-science " +
+        "concepts (syntax, loops, arrays, OOP, debugging, etc.). " +
         "If asked about anything outside that scope — unrelated topics, other products, personal " +
         "advice, current events, medical/legal/financial advice, etc. — politely decline in one " +
         "short sentence and steer the conversation back to programming or Questify. " +
         "Keep answers concise, beginner-friendly, and encouraging. " +
+        ComingSoonInstruction + " " +
         LanguageMatchInstruction;
 
     // Appended instead of the generic scope note above when the caller knows which track the
@@ -45,17 +64,16 @@ public class AiService : IAiService
         "programming-learning platform. The user is currently enrolled in the {0} course. " +
         "You may answer questions about: (1) Questify's own features — quests/levels, XP, " +
         "gold, the shop, leaderboard, streaks, avatars, jokers, achievements, friends; (2) " +
-        "{0} programming concepts (syntax, loops, arrays, OOP, debugging, etc.); and (3) Java, " +
-        "Python, or general programming/computer-science concepts even though the user isn't " +
-        "enrolled in that course right now. " +
+        "{0} programming concepts (syntax, loops, arrays, OOP, debugging, etc.); and (3) any " +
+        "other programming/software-development technology, even outside {0}. " +
         "LANGUAGE LOCK (for the user's own {0} course only): when the question is about {0} — the " +
         "course the user is actively working through — every explanation and code example must be " +
         "written in {0} ONLY; never substitute a different language for {0} material. " +
-        "JAVA/PYTHON/GENERAL QUESTIONS: if the user instead asks about Java, Python, or a general " +
-        "programming/CS concept, do NOT refuse and do NOT redirect them back to {0} — give a real, " +
-        "helpful, informative answer in that language (with a short code example if useful), then " +
-        "enthusiastically mention that a full interactive Questify learning path for that language " +
-        "is 'Coming Soon'! " +
+        "OTHER TECHNOLOGIES: if the user instead asks about a different programming technology " +
+        "(another language, a framework, a tool, etc.), do NOT refuse and do NOT redirect them " +
+        "back to {0} — give a real, helpful, informative answer in that technology (with a short " +
+        "code example if useful). " +
+        ComingSoonInstruction + " " +
         "If asked about anything truly outside that scope — unrelated topics, other products, " +
         "personal advice, current events, medical/legal/financial advice, etc. — politely decline " +
         "in one short sentence and steer the conversation back to programming or Questify. " +
@@ -112,7 +130,7 @@ public class AiService : IAiService
         _logger = logger;
     }
 
-    public async Task<string> AskAsync(IEnumerable<(string Role, string Content)> history, string? course = null, CancellationToken cancellationToken = default)
+    public async Task<(string Reply, string? DebugError)> AskAsync(IEnumerable<(string Role, string Content)> history, string? course = null, CancellationToken cancellationToken = default)
     {
         var settings = _configuration.GetSection("AiSettings");
         var apiKey = settings["ApiKey"];
@@ -123,7 +141,7 @@ public class AiService : IAiService
         if (string.IsNullOrWhiteSpace(apiKey))
         {
             _logger.LogWarning("AiSettings:ApiKey is not configured — set it via 'dotnet user-secrets set \"AiSettings:ApiKey\" \"...\"' in Development, or the AiSettings__ApiKey environment variable elsewhere.");
-            return "The AI mentor isn't configured on the server yet.";
+            return (string.Empty, "AiSettings:ApiKey is not set.");
         }
 
         var systemPrompt = IsKnownCourse(course)
@@ -138,16 +156,22 @@ public class AiService : IAiService
         // fix already applied to GenerateQuestionAsync's QuestionMaxTokens, for the same reason.
         const int ChatMaxTokens = 600;
 
-        var reply = await TryModelAsync(model, apiKey, baseUrl, messages, cancellationToken, ChatMaxTokens);
-        if (reply is not null) return reply;
+        var (reply, err1) = await TryModelAsync(model, apiKey, baseUrl, messages, cancellationToken, ChatMaxTokens);
+        if (reply is not null) return (reply, null);
 
         _logger.LogWarning("AI model {Model} was unavailable — retrying with fallback {Fallback}.", model, fallbackModel);
-        reply = await TryModelAsync(fallbackModel, apiKey, baseUrl, messages, cancellationToken, ChatMaxTokens);
+        var (reply2, err2) = await TryModelAsync(fallbackModel, apiKey, baseUrl, messages, cancellationToken, ChatMaxTokens);
+        if (reply2 is not null) return (reply2, null);
 
-        return reply ?? "Sorry, the AI mentor is temporarily unavailable. Please try again in a moment.";
+        // Both models failed — fail silently to the user. The exact provider failure is only
+        // ever surfaced server-side via DebugError (logged by the controller); the caller gets an
+        // empty reply and degrades to its own clean, localized fallback message instead of a raw
+        // error ever reaching the chat window.
+        var combinedError = $"primary: {err1} || fallback: {err2}";
+        return (string.Empty, combinedError);
     }
 
-    public async Task<GeneratedQuestionDto?> GenerateQuestionAsync(string language, string topic, string difficulty, string? contentLanguage = null, CancellationToken cancellationToken = default)
+    public async Task<(GeneratedQuestionDto? Question, string? DebugError)> GenerateQuestionAsync(string language, string topic, string difficulty, string? contentLanguage = null, CancellationToken cancellationToken = default)
     {
         var settings = _configuration.GetSection("AiSettings");
         var apiKey = settings["ApiKey"];
@@ -158,7 +182,7 @@ public class AiService : IAiService
         if (string.IsNullOrWhiteSpace(apiKey))
         {
             _logger.LogWarning("AiSettings:ApiKey is not configured — question generation unavailable.");
-            return null;
+            return (null, "AiSettings:ApiKey is not set.");
         }
 
         // A fresh random seed per call nudges the model toward a genuinely different question
@@ -175,13 +199,18 @@ public class AiService : IAiService
         // prevents malformed *truncation*).
         const int QuestionMaxTokens = 900;
 
-        var raw = await TryModelAsync(model, apiKey, baseUrl, messages, cancellationToken, QuestionMaxTokens);
+        var (raw, err1) = await TryModelAsync(model, apiKey, baseUrl, messages, cancellationToken, QuestionMaxTokens);
         var parsed = raw is null ? null : ParseGeneratedQuestion(raw);
-        if (parsed is not null) return parsed;
+        if (parsed is not null) return (parsed, null);
 
         _logger.LogWarning("AI question generation with {Model} failed/returned invalid JSON — retrying with {Fallback}.", model, fallbackModel);
-        raw = await TryModelAsync(fallbackModel, apiKey, baseUrl, messages, cancellationToken, QuestionMaxTokens);
-        return raw is null ? null : ParseGeneratedQuestion(raw);
+        var (raw2, err2) = await TryModelAsync(fallbackModel, apiKey, baseUrl, messages, cancellationToken, QuestionMaxTokens);
+        var parsed2 = raw2 is null ? null : ParseGeneratedQuestion(raw2);
+        if (parsed2 is not null) return (parsed2, null);
+
+        var debugError = raw is not null ? $"primary returned unparsable content: {raw}" : $"primary: {err1}";
+        var debugError2 = raw2 is not null ? $"fallback returned unparsable content: {raw2}" : $"fallback: {err2}";
+        return (null, $"{debugError} || {debugError2}");
     }
 
     // Strips a leading/trailing markdown code fence (```json ... ``` or plain ``` ... ```,
@@ -254,7 +283,11 @@ public class AiService : IAiService
         }
     }
 
-    private async Task<string?> TryModelAsync(string model, string apiKey, string baseUrl, List<object> messages, CancellationToken cancellationToken, int? maxTokens = null)
+    // Returns (content, rawError). On any failure Content is null and RawError carries the exact
+    // provider response body / exception text — logged here via _logger for the server console,
+    // and also handed back up to AskAsync/GenerateQuestionAsync so callers can (temporarily, for
+    // debugging in production) surface the real reason instead of only a generic fallback message.
+    private async Task<(string? Content, string? RawError)> TryModelAsync(string model, string apiKey, string baseUrl, List<object> messages, CancellationToken cancellationToken, int? maxTokens = null)
     {
         try
         {
@@ -275,8 +308,9 @@ public class AiService : IAiService
 
             if (!response.IsSuccessStatusCode)
             {
+                var rawError = $"{model} → HTTP {(int)response.StatusCode} {response.StatusCode}: {body}";
                 _logger.LogWarning("AI model {Model} returned {Status}: {Body}", model, response.StatusCode, body);
-                return null;
+                return (null, rawError);
             }
 
             using var doc = JsonDocument.Parse(body);
@@ -284,8 +318,9 @@ public class AiService : IAiService
 
             if (root.TryGetProperty("error", out var errorEl))
             {
+                var rawError = $"{model} → provider error payload: {errorEl}";
                 _logger.LogWarning("AI model {Model} returned an error payload: {Error}", model, errorEl.ToString());
-                return null;
+                return (null, rawError);
             }
 
             var content = root
@@ -294,7 +329,7 @@ public class AiService : IAiService
                 .GetProperty("content")
                 .GetString();
 
-            return string.IsNullOrWhiteSpace(content) ? null : content.Trim();
+            return (string.IsNullOrWhiteSpace(content) ? null : content.Trim(), null);
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
@@ -304,8 +339,9 @@ public class AiService : IAiService
         }
         catch (Exception ex)
         {
+            var rawError = $"{model} → exception: {ex.GetType().Name}: {ex.Message}";
             _logger.LogWarning(ex, "AI model {Model} request failed.", model);
-            return null;
+            return (null, rawError);
         }
     }
 }

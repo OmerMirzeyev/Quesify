@@ -49,7 +49,14 @@ public class AiController : ControllerBase
 
             var course = await ResolveEnrolledCourseAsync(request.Course);
 
-            var reply = await _aiService.AskAsync(history, course, cts.Token);
+            var (reply, debugError) = await _aiService.AskAsync(history, course, cts.Token);
+            if (debugError is not null)
+            {
+                // Caught silently from the user's perspective — the exact upstream failure (rate
+                // limit, bad model id, timeout, etc.) only ever goes to the server log. The
+                // frontend gets an empty `reply` and degrades to its own clean fallback message.
+                _logger.LogError("AI chat failed — raw reason: {DebugError}", debugError);
+            }
             return Ok(new { reply });
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)

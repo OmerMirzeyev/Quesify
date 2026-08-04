@@ -178,7 +178,9 @@ export default function AdminPanel() {
       });
 
       if (!ok || !data?.question) {
-        setAiWizardError(data?.message || t('adminAiGenFailedMsg'));
+        // Backend logs the exact upstream failure reason server-side; the admin only ever sees a
+        // clean, localized message here — never raw provider/HTTP text.
+        setAiWizardError(t('adminAiGenFailedMsg'));
         return;
       }
 

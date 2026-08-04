@@ -85,8 +85,10 @@ public class MapController : ControllerBase
 
         // Award XP (and check level-completion badges) only the first time this specific level
         // is completed — CompleteLevel is otherwise idempotent and gets called again on retries.
+        var coinsAwarded = 0;
         if (!wasAlreadyCompleted)
         {
+            coinsAwarded = GamificationConstants.LevelCompletionCoins;
             user.Xp += GamificationConstants.LevelCompletionXp;
             user.Coins += GamificationConstants.LevelCompletionCoins;
 
@@ -130,6 +132,10 @@ public class MapController : ControllerBase
             message = "Səviyyə tamamlandı.",
             unlockedNext = new { track = model.Track, chapterIndex = nextChapterIndex, levelIndex = nextLevelIndex },
             coins = user.Coins,
+            // The real amount just credited to the wallet (0 on repeat/idempotent calls) — the
+            // frontend uses this instead of the admin-configured per-quest goldReward (which is
+            // untrusted display-only data) so the completion toast never overstates real earnings.
+            coinsAwarded,
             hasUnlimitedCoins = user.HasEffectiveUnlimitedCoins()
         });
     }

@@ -285,7 +285,8 @@ export const AppProvider = ({ children }) => {
         setHasUnlimitedCoins(data.hasUnlimitedCoins);
       }
       loadMapProgress(track);
-    } catch { /* offline — local completedQuests still gates progress */ }
+      return ok ? data : null;
+    } catch { return null; /* offline — local completedQuests still gates progress */ }
   };
 
   // Admin shop management
@@ -835,7 +836,7 @@ export const AppProvider = ({ children }) => {
     showToast(`+${amount} ❤️ Can qazandınız!`, '💖');
   };
 
-  const completeQuest = (quest) => {
+  const completeQuest = async (quest) => {
     if (!activeProgrammingLanguage) return;
 
     // Check timeout restriction
@@ -865,21 +866,26 @@ export const AppProvider = ({ children }) => {
     addGold(quest.goldReward);
     addXp(awardedXp);
     addTrackRewards(activeProgrammingLanguage, quest.goldReward, awardedXp);
-    showToast(`+${quest.goldReward} 🪙  +${awardedXp} XP${xpMultiplier > 1 ? ' (2x!)' : ''} qazandınız!`, '⭐');
 
-    // Push quest completion notification
-    pushNotification('quest', `${quest.title} mərhələsini tamamladınız! +${quest.goldReward} 🪙`, '🏆');
-
-    // Sync unlock/completion state to the backend so progress isn't only ever known to this browser
+    // Sync unlock/completion state to the backend so progress isn't only ever known to this
+    // browser. Awaited here (rather than fire-and-forget) so the reward toast/notification below
+    // can show the REAL amount just credited to the spendable coin wallet — a flat, server-
+    // enforced rate — instead of the admin-configured per-quest goldReward above, which is
+    // cosmetic/local-only display data and was never trusted server-side.
     const trackChapters = QUESTS_BY_CHAPTER[activeProgrammingLanguage] || [];
+    let syncResult = null;
     for (let ci = 0; ci < trackChapters.length; ci++) {
       const li = (trackChapters[ci] || []).findIndex((q) => q.id === quest.id);
       if (li !== -1) {
         const isLastLevelOfChapter = li === trackChapters[ci].length - 1;
-        syncMapCompletion(activeProgrammingLanguage, ci, li, isLastLevelOfChapter);
+        syncResult = await syncMapCompletion(activeProgrammingLanguage, ci, li, isLastLevelOfChapter);
         break;
       }
     }
+
+    const earnedCoins = syncResult?.coinsAwarded ?? quest.goldReward;
+    showToast(`+${earnedCoins} 🪙  +${awardedXp} XP${xpMultiplier > 1 ? ' (2x!)' : ''} qazandınız!`, '⭐');
+    pushNotification('quest', `${quest.title} mərhələsini tamamladınız! +${earnedCoins} 🪙`, '🏆');
 
     // Check if Map 1 (Chapter 1) is fully completed (exactly 20 levels completed)
     // Map 1 levels have IDs 1-20
