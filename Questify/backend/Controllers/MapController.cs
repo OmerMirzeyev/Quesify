@@ -139,4 +139,100 @@ public class MapController : ControllerBase
             hasUnlimitedCoins = user.HasEffectiveUnlimitedCoins()
         });
     }
+
+    // GET /api/map/chapters?track=C%23 — read-only, any authenticated user (unlike the admin-only
+    // create endpoints in AdminController). Only ever returns chapters *beyond* the two static
+    // ones every track already renders from mockData.js's CHAPTER_META — those two never get a
+    // DB row unless an admin targets one of their levels (see AdminController.ResolveLevel), and
+    // even then this endpoint still only returns what's actually in the DB. The frontend merges
+    // this list with its static CHAPTER_META array by OrderIndex.
+    [HttpGet("chapters")]
+    public async Task<IActionResult> GetChapters([FromQuery] string track)
+    {
+        if (string.IsNullOrWhiteSpace(track))
+            return BadRequest(new { message = "Track tələb olunur." });
+
+        var chapters = await _context.Chapters
+            .Where(c => c.Track == track)
+            .OrderBy(c => c.OrderIndex)
+            .Select(c => new ChapterDto
+            {
+                Id = c.Id,
+                Track = c.Track,
+                OrderIndex = c.OrderIndex,
+                Title = c.Title,
+                Description = c.Description,
+                Icon = c.Icon,
+                Color = c.Color
+            })
+            .ToListAsync();
+
+        return Ok(chapters);
+    }
+
+    // GET /api/map/levels?track=C%23&chapterOrderIndex=0 — same read-only/additive contract as
+    // GetChapters above. Looked up by (track, chapterOrderIndex) rather than a DB chapter id so a
+    // still-unmaterialized static chapter simply returns an empty list instead of requiring a GET
+    // to have side effects.
+    [HttpGet("levels")]
+    public async Task<IActionResult> GetLevels([FromQuery] string track, [FromQuery] int chapterOrderIndex)
+    {
+        if (string.IsNullOrWhiteSpace(track))
+            return BadRequest(new { message = "Track tələb olunur." });
+
+        var chapter = await _context.Chapters.FirstOrDefaultAsync(c => c.Track == track && c.OrderIndex == chapterOrderIndex);
+        if (chapter is null) return Ok(Array.Empty<LevelDto>());
+
+        var levels = await _context.Levels
+            .Where(l => l.ChapterId == chapter.Id)
+            .OrderBy(l => l.OrderIndex)
+            .Select(l => new LevelDto
+            {
+                Id = l.Id,
+                ChapterId = l.ChapterId,
+                OrderIndex = l.OrderIndex,
+                Title = l.Title,
+                Topic = l.Topic,
+                Icon = l.Icon,
+                Difficulty = l.Difficulty,
+                XpReward = l.XpReward,
+                GoldReward = l.GoldReward,
+                Description = l.Description
+            })
+            .ToListAsync();
+
+        return Ok(levels);
+    }
+
+    // GET /api/map/questions?levelId=5 — read-only, any authenticated user. This is what actually
+    // lets a level's admin-authored/AI-generated questions be played: QuestModal fetches this for
+    // any level it knows a real DB id for (see QuestsGrid's dbLevelId attachment) and merges the
+    // result into that level's playable challenge list, instead of only ever showing mockData.js's
+    // static content.
+    [HttpGet("questions")]
+    public async Task<IActionResult> GetQuestionsForLevel([FromQuery] int levelId)
+    {
+        var level = await _context.Levels.Include(l => l.Chapter).FirstOrDefaultAsync(l => l.Id == levelId);
+        if (level is null) return Ok(Array.Empty<QuestionRecordDto>());
+
+        var questions = await _context.Questions
+            .Where(q => q.LevelId == levelId)
+            .OrderBy(q => q.Id)
+            .ToListAsync();
+
+        var result = questions.Select(q => new QuestionRecordDto
+        {
+            Id = q.Id,
+            Language = level.Chapter.Track,
+            ChapterId = level.ChapterId,
+            LevelId = level.Id,
+            LevelTitle = level.Title,
+            QuestionText = q.QuestionText,
+            Options = new QuestionOptionsDto { A = q.OptionA, B = q.OptionB, C = q.OptionC, D = q.OptionD },
+            CorrectOption = q.CorrectOption,
+            Hint = q.Hint
+        });
+
+        return Ok(result);
+    }
 }

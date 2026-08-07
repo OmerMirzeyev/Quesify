@@ -1,13 +1,38 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { toast } from 'sonner';
 import { useApp } from '../../context/AppContext';
 import { translateLevelTitle, translateChallenges } from '../../i18n/contentTranslations';
+import { apiFetch } from '../../utils/api';
 
 const QUESTION_TIME_SECONDS = 45;
 const TIME_FREEZE_BONUS_SECONDS = 20;
+const OPTION_LETTERS = ['A', 'B', 'C', 'D'];
 
-export default function QuestModal({ quest, onClose }) {
+// Converts a backend QuestionRecordDto (GET /api/map/questions) into this component's internal
+// challenge shape ({question, options, correctIndex, hint}) — options are camelCased by
+// System.Text.Json (a/b/c/d, not A/B/C/D), and empty C/D slots are dropped so a 2-option question
+// doesn't render two blank buttons. correctIndex is recomputed against the FILTERED array (not
+// the raw letter position), so a blank slot before the correct option never shifts it out of range.
+function questionRecordToChallenge(q) {
+  const opts = q.options || {};
+  const lettered = OPTION_LETTERS.map((letter, i) => ({ letter, text: [opts.a, opts.b, opts.c, opts.d][i] }))
+    .filter((o) => o.text !== '' && o.text != null);
+  return {
+    question: q.questionText,
+    options: lettered.map((o) => o.text),
+    correctIndex: Math.max(lettered.findIndex((o) => o.letter === q.correctOption), 0),
+    hint: q.hint || '',
+  };
+}
+
+// `practiceMode` — set when re-entering an already-completed level to replay it (Task 2 "Tekrar
+// Et"). Fully interactive (timer, checking answers, hints) but deliberately never calls
+// completeQuest/deductHeart or otherwise touches real progress, coins, XP, or hearts — replaying
+// is meant to be a free, stakes-free practice pass, not a way to re-earn rewards or lose hearts.
+export default function QuestModal({ quest, onClose, practiceMode = false }) {
   const { completeQuest, completedQuests, user, deductHeart, spendJoker, spendTimeFreeze, spendHintCard, spendAnswerChange, t, activeProgrammingLanguage, language, addFailedQuestion, triggerAIExplanation } = useApp();
   const displayTitle = translateLevelTitle(activeProgrammingLanguage, quest.id, language, quest.title);
+  const [practiceStats, setPracticeStats] = useState({ correct: 0, total: 0 });
 
   const [currentQIdx, setCurrentQIdx] = useState(0);
   const [selectedOption, setSelectedOption] = useState(null);
@@ -20,28 +45,77 @@ export default function QuestModal({ quest, onClose }) {
   const [timeLeft, setTimeLeft] = useState(QUESTION_TIME_SECONDS);
   const [answerChangeUsed, setAnswerChangeUsed] = useState(false); // once per question
 
+  // Admin-added/AI-generated questions for this exact level, fetched fresh on every mount so a
+  // question added moments ago (in the same session, no page reload) is immediately playable.
+  // `quest.dbLevelId` is only ever set once this level has been resolved into a real DB row (see
+  // QuestsGrid's currentChapterQuests) — a level nobody has ever targeted via the map's "+" button
+  // has no DB row and therefore nothing to fetch, so this stays empty and costs nothing.
+  const [dbChallenges, setDbChallenges] = useState([]);
+  const [challengesLoading, setChallengesLoading] = useState(!!quest.dbLevelId);
+
+  useEffect(() => {
+    if (!quest.dbLevelId) {
+      setDbChallenges([]);
+      setChallengesLoading(false);
+      return undefined;
+    }
+    let cancelled = false;
+    setChallengesLoading(true);
+    apiFetch(`/api/map/questions?levelId=${quest.dbLevelId}`, { auth: true })
+      .then(({ ok, data }) => {
+        if (cancelled || !ok || !Array.isArray(data)) return;
+        setDbChallenges(data.map(questionRecordToChallenge));
+      })
+      .finally(() => {
+        if (!cancelled) setChallengesLoading(false);
+      });
+    return () => { cancelled = true; };
+  }, [quest.dbLevelId]);
+
   // QuestsGrid only ever mounts this component as `{selectedQuest && <QuestModal ... />}`, so
   // `quest` is guaranteed non-null for the component's entire lifetime — no null-guard needed
   // here (an early return before the hooks below would violate the Rules of Hooks).
 
   const isAlreadyCompleted = (completedQuests[activeProgrammingLanguage] || []).includes(quest.id);
+  // The "frozen, view-only" state (all options disabled, no Check/Retry/Next buttons) only
+  // applies when a completed quest is shown WITHOUT practice mode — which no longer happens via
+  // the normal node click (QuestsGrid routes completed levels through the replay confirmation
+  // instead), but this stays correct as a defensive fallback for however QuestModal is invoked.
+  const isLocked = isAlreadyCompleted && !practiceMode;
+  // Consumable power-ups (jokers, hints, freeze, answer-change) spend real inventory — blocked
+  // during practice so replaying a level for fun can never drain the user's actual item stock.
+  const powerUpsAllowed = !isLocked && !practiceMode;
 
-  // Backwards compatibility if quest structure lacks challenges array
-  const rawChallengeList = quest.challenges || [quest.challenge];
+  // Static mockData challenges (backwards compatible if the quest structure lacks a challenges
+  // array) PLUS whatever admin-added/AI-generated questions were just fetched for this level —
+  // this is what actually binds the quiz to the clicked level's real question set instead of only
+  // ever falling back to static content.
+  const staticChallenges = quest.challenges && quest.challenges.length > 0
+    ? quest.challenges
+    : (quest.challenge ? [quest.challenge] : []);
+  const rawChallengeList = useMemo(
+    () => [...staticChallenges, ...dbChallenges],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [quest, dbChallenges]
+  );
   // Localizes question/options/hint into the user's selected UI language, falling back to the
-  // original Azerbaijani text for any level/language combination not yet translated.
+  // original Azerbaijani text for any level/language combination not yet translated (translation
+  // lookup is keyed by index, so the appended DB questions — which have no translation entry —
+  // simply pass through unchanged, see translateChallenges).
   const challengeList = translateChallenges(activeProgrammingLanguage, quest.id, language, rawChallengeList);
   const currentChallenge = challengeList[currentQIdx];
-  const noHearts = user.hearts <= 0 && !isAlreadyCompleted;
+  const hasNoQuestions = !challengesLoading && challengeList.length === 0;
+  const noHearts = !practiceMode && !hasNoQuestions && user.hearts <= 0 && !isAlreadyCompleted;
 
   const handleOptionClick = (idx) => {
     if (eliminatedOptions.includes(idx)) return;
-    if (checked && !isAlreadyCompleted) return; // Prevent change after check
+    if (checked) return; // Prevent change after check
     setSelectedOption(idx);
     setFeedback('');
   };
 
   const handleCheck = () => {
+    if (!currentChallenge) return;
     if (selectedOption === null) {
       setFeedback(t('selectOptionMsg'));
       return;
@@ -50,6 +124,7 @@ export default function QuestModal({ quest, onClose }) {
     const correct = selectedOption === currentChallenge.correctIndex;
     setIsCorrect(correct);
     setChecked(true);
+    if (practiceMode) setPracticeStats((prev) => ({ correct: prev.correct + (correct ? 1 : 0), total: prev.total + 1 }));
 
     if (correct) {
       setFeedback(t('correctMsg'));
@@ -66,19 +141,22 @@ export default function QuestModal({ quest, onClose }) {
       );
 
       setFeedback(t('wrongMsg'));
-      deductHeart();
+      // Hearts are real, persistent stakes — practice/replay is meant to be free of them.
+      if (!practiceMode) deductHeart();
     }
   };
 
   // Per-question countdown auto-submits whatever is selected (or a blank/wrong attempt if
   // nothing was picked) — same outcome as clicking "Check Answer", just triggered by the clock.
   const handleTimeUp = useCallback(() => {
+    if (!currentChallenge) return;
     if (selectedOption === null) {
       setIsCorrect(false);
       setChecked(true);
       setFeedback('⏰ Vaxt bitdi! ' + t('wrongMsg'));
       addFailedQuestion(quest.id, currentChallenge);
-      deductHeart();
+      if (practiceMode) setPracticeStats((prev) => ({ ...prev, total: prev.total + 1 }));
+      if (!practiceMode) deductHeart();
       return;
     }
     handleCheck();
@@ -86,14 +164,14 @@ export default function QuestModal({ quest, onClose }) {
   }, [selectedOption, currentChallenge, quest.id]);
 
   useEffect(() => {
-    if (checked || isAlreadyCompleted || noHearts) return undefined;
+    if (checked || isLocked || noHearts || challengesLoading || hasNoQuestions) return undefined;
     if (timeLeft <= 0) {
       handleTimeUp();
       return undefined;
     }
     const id = setTimeout(() => setTimeLeft((prev) => prev - 1), 1000);
     return () => clearTimeout(id);
-  }, [timeLeft, checked, isAlreadyCompleted, noHearts, handleTimeUp]);
+  }, [timeLeft, checked, isLocked, noHearts, challengesLoading, hasNoQuestions, handleTimeUp]);
 
   const handleNextQuestion = () => {
     setCurrentQIdx(prev => prev + 1);
@@ -109,12 +187,19 @@ export default function QuestModal({ quest, onClose }) {
   };
 
   const handleClaim = () => {
+    if (practiceMode) {
+      // No completeQuest here — replaying never re-grants rewards or rewrites map progress. Only
+      // an ephemeral, session-local score is surfaced back to the user.
+      toast.success(t('practiceFinishedToast', { correct: practiceStats.correct, total: practiceStats.total }));
+      onClose();
+      return;
+    }
     completeQuest(quest);
     onClose();
   };
 
   const handleJokerClick = () => {
-    if (eliminatedOptions.length > 0 || checked || isAlreadyCompleted) return;
+    if (eliminatedOptions.length > 0 || checked || !powerUpsAllowed) return;
 
     // Find incorrect options
     const incorrectIndices = currentChallenge.options
@@ -135,7 +220,7 @@ export default function QuestModal({ quest, onClose }) {
 
   // Hint Card — soft-flags one incorrect option (not removed, just marked) beyond the free hint.
   const handleHintCardClick = () => {
-    if (checked || isAlreadyCompleted || flaggedOption !== null) return;
+    if (checked || !powerUpsAllowed || flaggedOption !== null) return;
     const incorrectIndices = currentChallenge.options
       .map((_, idx) => idx)
       .filter((idx) => idx !== currentChallenge.correctIndex && !eliminatedOptions.includes(idx));
@@ -149,7 +234,7 @@ export default function QuestModal({ quest, onClose }) {
 
   // Freeze Time — spends a charge for extra time on the current question's clock.
   const handleFreezeClick = () => {
-    if (checked || isAlreadyCompleted) return;
+    if (checked || !powerUpsAllowed) return;
     if (spendTimeFreeze()) {
       setTimeLeft((prev) => prev + TIME_FREEZE_BONUS_SECONDS);
     }
@@ -157,7 +242,7 @@ export default function QuestModal({ quest, onClose }) {
 
   // Answer Change — after a wrong check, refund the heart just lost and let the user retry once.
   const handleAnswerChangeClick = () => {
-    if (!checked || isCorrect || isAlreadyCompleted || answerChangeUsed) return;
+    if (!checked || isCorrect || !powerUpsAllowed || answerChangeUsed) return;
     if (spendAnswerChange()) {
       setAnswerChangeUsed(true);
       setChecked(false);
@@ -198,6 +283,7 @@ export default function QuestModal({ quest, onClose }) {
               <span className={`badge ${difficultyClass}`}>{quest.difficulty}</span>
               <span className="badge badge-code">{'</> ' + activeProgrammingLanguage}</span>
               {isAlreadyCompleted && <span className="badge badge-easy">{t('alreadyCompleted')}</span>}
+              {practiceMode && <span className="badge badge-code">{t('practiceModeBadge')}</span>}
             </div>
           </div>
         </div>
@@ -211,6 +297,16 @@ export default function QuestModal({ quest, onClose }) {
             <div style={{ fontSize: '3rem', marginBottom: '1rem' }}>💔</div>
             <h3 style={{ color: 'var(--accent-red)', margin: 0 }}>{t('noHeartsMsg')}</h3>
           </div>
+        ) : challengesLoading ? (
+          <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+            <div style={{ fontSize: '2rem', marginBottom: '0.75rem' }}>⏳</div>
+            {t('questionsLoadingLabel')}
+          </div>
+        ) : hasNoQuestions ? (
+          <div style={{ padding: '2rem', textAlign: 'center', color: 'var(--text-muted)' }}>
+            <div style={{ fontSize: '2rem', marginBottom: '0.75rem' }}>📭</div>
+            {t('noQuestionsForLevel')}
+          </div>
         ) : (
           <div style={{
             background: 'var(--bg-input)', border: '1px solid var(--border-color)',
@@ -218,13 +314,13 @@ export default function QuestModal({ quest, onClose }) {
           }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
               <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--accent-purple-light)', textTransform: 'uppercase' }}>
-                {t('knowledgeCheck')}
+                {t('knowledgeCheck', { lang: activeProgrammingLanguage })}
               </span>
               <span style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
                 <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--text-muted)' }}>
                   {t('questionProgress', { current: currentQIdx + 1, total: challengeList.length })}
                 </span>
-                {!checked && !isAlreadyCompleted && (
+                {!checked && !isLocked && (
                   <span
                     style={{
                       fontSize: '0.72rem', fontWeight: 800, padding: '0.1rem 0.5rem', borderRadius: '100px',
@@ -281,12 +377,12 @@ export default function QuestModal({ quest, onClose }) {
                     key={idx}
                     type="button"
                     onClick={() => handleOptionClick(idx)}
-                    disabled={isAlreadyCompleted || isEliminated}
+                    disabled={isLocked || isEliminated}
                     style={{
                       width: '100%', padding: '0.85rem 1rem', borderRadius: '8px',
                       border: borderStyle, background: bgStyle, opacity,
                       color: 'var(--text-primary)', textAlign: 'left', fontSize: '0.88rem',
-                      cursor: (isAlreadyCompleted || isEliminated) ? 'default' : 'pointer',
+                      cursor: (isLocked || isEliminated) ? 'default' : 'pointer',
                       transition: 'all 0.15s ease', display: 'flex', alignItems: 'center', gap: '0.75rem'
                     }}
                   >
@@ -322,7 +418,7 @@ export default function QuestModal({ quest, onClose }) {
               </button>
 
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                {!isAlreadyCompleted && !checked && user.timeFreezes > 0 && (
+                {powerUpsAllowed && !checked && user.timeFreezes > 0 && (
                   <button
                     type="button"
                     className="btn btn-outline btn-sm"
@@ -333,7 +429,7 @@ export default function QuestModal({ quest, onClose }) {
                   </button>
                 )}
 
-                {!isAlreadyCompleted && !checked && flaggedOption === null && user.hintCards > 0 && (
+                {powerUpsAllowed && !checked && flaggedOption === null && user.hintCards > 0 && (
                   <button
                     type="button"
                     className="btn btn-outline btn-sm"
@@ -344,7 +440,7 @@ export default function QuestModal({ quest, onClose }) {
                   </button>
                 )}
 
-                {!isAlreadyCompleted && user.jokers > 0 && !checked && eliminatedOptions.length === 0 && (
+                {powerUpsAllowed && user.jokers > 0 && !checked && eliminatedOptions.length === 0 && (
                   <button
                     type="button"
                     className="btn btn-gold btn-sm"
@@ -354,7 +450,7 @@ export default function QuestModal({ quest, onClose }) {
                     🃏 50/50 Joker İstifadə Et <span style={{ background: 'rgba(0,0,0,0.2)', borderRadius: '100px', padding: '0.05rem 0.4rem', fontSize: '0.72rem' }}>{user.jokers}</span>
                   </button>
                 )}
-                {!isAlreadyCompleted && user.jokers === 0 && eliminatedOptions.length === 0 && !checked && (
+                {powerUpsAllowed && user.jokers === 0 && eliminatedOptions.length === 0 && !checked && (
                   <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.3rem' }}>
                     🃏 Joker yoxdur — <button type="button" style={{ background:'none', color:'var(--accent-gold)', fontSize: '0.72rem', fontWeight:700, cursor:'pointer' }}>Dükkandan al</button>
                   </span>
@@ -389,21 +485,21 @@ export default function QuestModal({ quest, onClose }) {
         )}
 
         {/* Buttons */}
-        {!noHearts && (
+        {!noHearts && !challengesLoading && !hasNoQuestions && (
           <div style={{ display: 'flex', gap: '0.75rem' }}>
-            {!isAlreadyCompleted && !checked && (
+            {!isLocked && !checked && (
               <button type="button" className="btn btn-outline" onClick={handleCheck} style={{ flex: 1, height: '48px' }}>
                 {t('checkAnswer')}
               </button>
             )}
 
-            {!isAlreadyCompleted && checked && !isCorrect && (
+            {!isLocked && checked && !isCorrect && (
               <button type="button" className="btn btn-outline" onClick={() => { setChecked(false); setSelectedOption(null); setFeedback(''); }} style={{ flex: 1, height: '48px' }}>
                 Yenidən Cəhd Et
               </button>
             )}
 
-            {!isAlreadyCompleted && checked && !isCorrect && !answerChangeUsed && user.answerChanges > 0 && (
+            {powerUpsAllowed && checked && !isCorrect && !answerChangeUsed && user.answerChanges > 0 && (
               <button
                 type="button"
                 className="btn btn-gold"
@@ -415,19 +511,23 @@ export default function QuestModal({ quest, onClose }) {
               </button>
             )}
 
-            {!isAlreadyCompleted && checked && isCorrect && !isLastQuestion && (
+            {!isLocked && checked && isCorrect && !isLastQuestion && (
               <button type="button" className="btn btn-primary" onClick={handleNextQuestion} style={{ flex: 1, height: '48px' }}>
                 {t('nextQuestion')}
               </button>
             )}
 
-            {(isAlreadyCompleted || (checked && isCorrect && isLastQuestion)) && (
+            {(isLocked || (checked && isCorrect && isLastQuestion)) && (
               <button
                 className="btn btn-gold"
                 onClick={handleClaim}
                 style={{ flex: 1.5, height: '48px', fontFamily: 'var(--font-display)', letterSpacing: '1px' }}
               >
-                {isAlreadyCompleted ? t('alreadyCompleted') : t('claimReward') + ` (+${quest.goldReward} Gold)`}
+                {isLocked
+                  ? t('alreadyCompleted')
+                  : practiceMode
+                    ? t('practiceFinishBtn')
+                    : t('claimReward') + ` (+${quest.goldReward} Gold)`}
               </button>
             )}
           </div>

@@ -58,6 +58,15 @@ export const AppProvider = ({ children }) => {
   const [currentTab, setCurrentTab] = useState('dashboard');
   const [toast, setToast] = useState(null);
 
+  // Cross-component "target this map node in the admin question form" handoff — set by the
+  // ChapterMap node "+" button's "Add Question Manually" action, consumed once by AdminPanel
+  // (which switches to its Quests tab, pre-selects Language/Chapter/Level, then clears this).
+  const [pendingAdminQuestTarget, setPendingAdminQuestTarget] = useState(null);
+  const requestAdminQuestTarget = (target) => {
+    setPendingAdminQuestTarget(target);
+    setCurrentTab('admin');
+  };
+
   const [language, setLanguage] = useState(() => localStorage.getItem('questify_lang') || 'az');
 
   const t = (key, params = {}) => {
@@ -1521,6 +1530,9 @@ export const AppProvider = ({ children }) => {
     toggleTheme,
     currentTab,
     setCurrentTab,
+    pendingAdminQuestTarget,
+    setPendingAdminQuestTarget,
+    requestAdminQuestTarget,
     user,
     addGold,
     spendGold,

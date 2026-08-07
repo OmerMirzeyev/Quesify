@@ -1,12 +1,52 @@
 import React, { useState, useRef, useLayoutEffect, useEffect, useMemo, useCallback, memo } from 'react';
+import { toast } from 'sonner';
 import { useApp } from '../../context/AppContext';
 import QuestModal from './QuestModal';
 import { QUESTS_BY_CHAPTER, CHAPTER_META } from '../../data/mockData';
 import { translateChapterMeta, translateLevelTitle } from '../../i18n/contentTranslations';
+import { apiFetch } from '../../utils/api';
 
 const LEVEL_SPACING = 165;
 const MIN_MAP_WIDTH = 320;
 const DEFAULT_MAP_WIDTH = 720;
+
+// How many chapters already exist as static frontend content per track (CHAPTER_META above) —
+// any chapter an admin creates through the "+" button gets appended after these, and this same
+// number tells the backend where a brand-new chapter's OrderIndex should start counting from
+// (see CreateChapterDto.BaseOrderIndex on the backend).
+const STATIC_CHAPTER_COUNT = 2;
+
+// Level.Difficulty is stored server-side in canonical English (matches AiService's prompt
+// template) while mockData/the UI use Azerbaijani labels — these two small maps convert between
+// them whenever a level (static or DB) crosses that boundary (resolve calls, AI generation).
+const DIFFICULTY_AZ_TO_EN = { Asan: 'Easy', Orta: 'Medium', Çətin: 'Hard' };
+const DIFFICULTY_EN_TO_AZ = { Easy: 'Asan', Medium: 'Orta', Hard: 'Çətin' };
+
+const CONTENT_LANGUAGE_NAME = { az: 'Azerbaijani', en: 'English', tr: 'Turkish', ru: 'Russian' };
+
+// Converts a DB Level row (see backend LevelDto) into the same shape mockData quest objects use,
+// so it can be rendered by the existing MapNode/roadmap-path pipeline without a separate branch.
+// `challenges` stays empty — gameplay itself isn't wired to the new Question table in this pass,
+// this only covers the admin content-management flow (creating/AI-generating questions for a
+// node); playing a DB-authored question through QuestModal is a follow-up, not in scope here.
+function dbLevelToQuest(level) {
+  return {
+    id: `db-${level.id}`,
+    dbLevelId: level.id,
+    dbChapterId: level.chapterId,
+    orderIndex: level.orderIndex,
+    levelName: `Level ${level.orderIndex + 1}`,
+    title: level.title,
+    topic: level.topic,
+    icon: level.icon || '📝',
+    difficulty: DIFFICULTY_EN_TO_AZ[level.difficulty] || 'Orta',
+    xpReward: level.xpReward,
+    goldReward: level.goldReward,
+    isCodingQuest: true,
+    description: level.description || '',
+    challenges: [],
+  };
+}
 
 function getMapMetrics(width) {
   const mapWidth = Math.max(width, MIN_MAP_WIDTH);
@@ -50,6 +90,9 @@ const MapNode = memo(function MapNode({
   isChestClaimed,
   onSelect,
   onClaimChest,
+  isAdmin,
+  onAdminAction,
+  t,
 }) {
   const displayTitle = translateLevelTitle(activeProgrammingLanguage, quest.id, language, quest.title);
   const stateClass = completed
@@ -74,22 +117,58 @@ const MapNode = memo(function MapNode({
           top: `${y - halfNode}px`,
         }}
       >
-        <button
-          id={`roadmap-node-${quest.id}`}
-          type="button"
-          className={`roadmap-node-btn ${stateClass}${isActive ? ' roadmap-node-btn--active' : ''}`}
-          onClick={() => unlocked && onSelect(quest)}
-          disabled={!unlocked}
-        >
-          {!unlocked ? (
-            <div className="roadmap-node-lock">🔒</div>
-          ) : completed ? (
-            <div className="roadmap-node-check">✓</div>
-          ) : null}
-          <span className={!unlocked ? 'roadmap-node-icon--locked' : 'roadmap-node-icon'}>
-            {quest.icon}
-          </span>
-        </button>
+        <div style={{ position: 'relative', width: `${nodeSize}px`, height: `${nodeSize}px` }}>
+          <button
+            id={`roadmap-node-${quest.id}`}
+            type="button"
+            className={`roadmap-node-btn ${stateClass}${isActive ? ' roadmap-node-btn--active' : ''}`}
+            onClick={() => unlocked && onSelect(quest)}
+            disabled={!unlocked}
+          >
+            {!unlocked ? (
+              <div className="roadmap-node-lock">🔒</div>
+            ) : completed ? (
+              <div className="roadmap-node-check">✓</div>
+            ) : null}
+            <span className={!unlocked ? 'roadmap-node-icon--locked' : 'roadmap-node-icon'}>
+              {quest.icon}
+            </span>
+          </button>
+
+          {isAdmin && (
+            <button
+              type="button"
+              className="roadmap-node-admin-add-btn"
+              title={t('nodeAddQuestionBtnTitle')}
+              onClick={(e) => {
+                e.stopPropagation();
+                onAdminAction(quest, index);
+              }}
+              style={{
+                position: 'absolute',
+                top: '-6px',
+                right: '-6px',
+                width: '26px',
+                height: '26px',
+                borderRadius: '50%',
+                border: '1px solid rgba(6, 182, 212, 0.6)',
+                background: 'var(--bg-card, #0b0b1e)',
+                color: 'var(--accent-cyan, #06b6d4)',
+                fontSize: '1rem',
+                fontWeight: 800,
+                lineHeight: 1,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                boxShadow: '0 0 8px rgba(6, 182, 212, 0.65), 0 0 2px rgba(6, 182, 212, 0.9)',
+                zIndex: 5,
+              }}
+            >
+              +
+            </button>
+          )}
+        </div>
 
         <div className="roadmap-tag">
           <div
@@ -151,11 +230,34 @@ export default function QuestsGrid() {
     isAdmin,
     t,
     language,
+    requestAdminQuestTarget,
   } = useApp();
 
   const [selectedQuest, setSelectedQuest] = useState(null);
   const [selectedChapterIdx, setSelectedChapterIdx] = useState(0);
   const [mapWidth, setMapWidth] = useState(DEFAULT_MAP_WIDTH);
+
+  // Admin-only additive chapter/level layer — fetched from the read-only /api/map endpoints (any
+  // authenticated user can read them; only AdminController's endpoints can write). Empty for
+  // non-admin users' tracks that have no extra content yet, so nothing renders differently for them.
+  const [dbChapters, setDbChapters] = useState([]);
+  const [dbLevels, setDbLevels] = useState([]);
+  const [showNewChapterModal, setShowNewChapterModal] = useState(false);
+  const [newChapterForm, setNewChapterForm] = useState({ title: '', description: '' });
+  const [creatingChapter, setCreatingChapter] = useState(false);
+
+  // Node "+" action modal (Task 1.3) — set to { quest, index } when a node's floating "+" is clicked.
+  const [nodeActionTarget, setNodeActionTarget] = useState(null);
+  const [nodeActionBusy, setNodeActionBusy] = useState(false);
+  const [nodeActionError, setNodeActionError] = useState('');
+  const [nodeActionSuccess, setNodeActionSuccess] = useState('');
+
+  // Task 2 — replaying a completed level. Clicking a completed node opens the small confirmation
+  // modal below (completedReplayTarget) instead of QuestModal directly; confirming there opens
+  // QuestModal in `practiceMode` (practiceQuest) — fully interactive, but never touches real
+  // progress/rewards (see QuestModal's practiceMode handling).
+  const [completedReplayTarget, setCompletedReplayTarget] = useState(null);
+  const [practiceQuest, setPracticeQuest] = useState(null);
 
   const mapScrollRef = useRef(null);
   const mapInnerRef = useRef(null);
@@ -174,11 +276,87 @@ export default function QuestsGrid() {
     [activeProgrammingLanguage]
   );
   const chaptersMeta = CHAPTER_META[activeProgrammingLanguage] || [];
-  const currentChapterQuests = useMemo(
-    () => chapters[selectedChapterIdx] || [],
-    [chapters, selectedChapterIdx]
-  );
-  const currentChapterMeta = chaptersMeta[selectedChapterIdx] || {};
+
+  // Fetch admin-created extra chapters for this track — read-only, available to every logged-in
+  // user (not just admins), so a chapter an admin adds shows up on everyone's map.
+  useEffect(() => {
+    if (!activeProgrammingLanguage) return undefined;
+    let cancelled = false;
+    apiFetch(`/api/map/chapters?track=${encodeURIComponent(activeProgrammingLanguage)}`, { auth: true })
+      .then(({ ok, data }) => {
+        if (!cancelled && ok && Array.isArray(data)) setDbChapters(data);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [activeProgrammingLanguage]);
+
+  // Fetch admin-created extra levels for the *currently selected* chapter only (appended after
+  // whatever static levels that chapter already has, or the only content for a DB-only chapter).
+  useEffect(() => {
+    if (!activeProgrammingLanguage) { setDbLevels([]); return undefined; }
+    let cancelled = false;
+    apiFetch(
+      `/api/map/levels?track=${encodeURIComponent(activeProgrammingLanguage)}&chapterOrderIndex=${selectedChapterIdx}`,
+      { auth: true }
+    )
+      .then(({ ok, data }) => {
+        if (!cancelled && ok && Array.isArray(data)) setDbLevels(data);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [activeProgrammingLanguage, selectedChapterIdx]);
+
+  // Static chapter metadata merged with any admin-created extra chapters, sorted so DB chapters
+  // always render after the static ones (their OrderIndex is assigned starting right after
+  // STATIC_CHAPTER_COUNT — see backend AdminController.CreateChapter). A DB chapter row can also
+  // exist at index 0/1 (a "shadow" row lazily materialized the first time an admin targets one of
+  // that static chapter's levels via ResolveLevel) — those are deliberately dropped here since the
+  // static entry at that index already renders the tab; only genuinely new indices are appended.
+  const allChaptersMeta = useMemo(() => {
+    const staticIndices = new Set(chaptersMeta.map((c) => c.index));
+    const dbMeta = dbChapters
+      .filter((c) => !staticIndices.has(c.orderIndex))
+      .map((c) => ({
+        index: c.orderIndex,
+        title: c.title,
+        subtitle: c.description || '',
+        icon: c.icon || '📦',
+        color: c.color || '#8b5cf6',
+        dbId: c.id,
+      }));
+    return [...chaptersMeta, ...dbMeta].sort((a, b) => a.index - b.index);
+  }, [chaptersMeta, dbChapters]);
+
+  const currentChapterQuests = useMemo(() => {
+    const staticQuests = (chapters[selectedChapterIdx] || []).map((q, idx) => ({ ...q, orderIndex: idx }));
+    // A DB Level row can exist at the SAME orderIndex as a static quest — that's exactly what
+    // ResolveLevel materializes the first time an admin targets an existing static level via the
+    // node "+" button (AI-generate or manual-add). Without this filter, saving a question against
+    // any of the 120 pre-existing static levels would make that level's shadow DB row show up as
+    // a second, duplicate node at the same map position on the next /api/map/levels fetch — this
+    // was the real cause behind the map looking corrupted right after adding a question.
+    const staticOrderIndices = new Set(staticQuests.map((q) => q.orderIndex));
+    const dbLevelsByOrderIndex = new Map(dbLevels.map((l) => [l.orderIndex, l]));
+    // A static quest whose level has been resolved (shadow-materialized) into a real DB row gets
+    // that row's id attached directly onto it — rather than just discarding the duplicate, like
+    // the filter above does — so QuestModal can fetch and play whatever admin-added/AI-generated
+    // questions exist for it (see GET /api/map/questions). Without this, a question added to one
+    // of the 120 static levels would be saved correctly but never actually be playable.
+    const mergedStaticQuests = staticQuests.map((q) => {
+      const match = dbLevelsByOrderIndex.get(q.orderIndex);
+      return match ? { ...q, dbLevelId: match.id, dbChapterId: match.chapterId } : q;
+    });
+    const extraQuests = dbLevels
+      .filter((l) => !staticOrderIndices.has(l.orderIndex))
+      .map(dbLevelToQuest);
+    const merged = [...mergedStaticQuests, ...extraQuests];
+    // Defensive sort by orderIndex (this data model's equivalent of a "levelNumber") — guarantees
+    // the map always flows strictly Level 1 → 2 → ... → N even if the static+DB concatenation
+    // order above were ever violated (e.g. a fetch race, or DB rows returned out of order).
+    return merged.sort((a, b) => (a.orderIndex ?? 0) - (b.orderIndex ?? 0));
+  }, [chapters, selectedChapterIdx, dbLevels]);
+
+  const currentChapterMeta = allChaptersMeta.find((c) => c.index === selectedChapterIdx) || {};
   const translatedChapterMeta = translateChapterMeta(
     activeProgrammingLanguage,
     selectedChapterIdx,
@@ -186,9 +364,20 @@ export default function QuestsGrid() {
     currentChapterMeta
   );
 
-  const ch1QuestIds = chapters[0]?.map((q) => q.id) || [];
-  const isCh1Completed =
-    ch1QuestIds.length > 0 && ch1QuestIds.every((id) => activeCompleted.includes(id));
+  // Generalized chapter-gating for any chapter index (not just the original two): unlocked when
+  // every *static, numeric-id* quest in the previous chapter is completed. A previous chapter with
+  // no static quests (a DB-only chapter) doesn't gate the next one — there's nothing to require
+  // completing yet since DB-authored questions aren't playable through QuestModal in this pass.
+  const isChapterUnlockedAtIndex = useCallback(
+    (idx) => {
+      if (isAdmin) return true;
+      if (idx === 0) return true;
+      const prevQuests = (chapters[idx - 1] || []).filter((q) => typeof q.id === 'number');
+      if (prevQuests.length === 0) return true;
+      return prevQuests.every((q) => activeCompleted.includes(q.id));
+    },
+    [isAdmin, chapters, activeCompleted]
+  );
 
   const { mapCenterX, swingAmplitude } = useMemo(
     () => getMapMetrics(mapWidth),
@@ -244,12 +433,16 @@ export default function QuestsGrid() {
       );
       if (serverEntry) return serverEntry.isUnlocked;
 
-      if (selectedChapterIdx === 1 && !isCh1Completed) return false;
+      if (!isChapterUnlockedAtIndex(selectedChapterIdx)) return false;
       if (index === 0) return true;
       const prevQuest = currentChapterQuests[index - 1];
-      return prevQuest ? activeCompleted.includes(prevQuest.id) : false;
+      if (!prevQuest) return false;
+      // DB-authored levels (non-numeric `db-...` ids) aren't playable yet, so they can never be
+      // "completed" — treat the chain as open past them rather than permanently locking the map.
+      if (typeof prevQuest.id !== 'number') return true;
+      return activeCompleted.includes(prevQuest.id);
     },
-    [isAdmin, mapProgress, activeProgrammingLanguage, selectedChapterIdx, isCh1Completed, currentChapterQuests, activeCompleted]
+    [isAdmin, mapProgress, activeProgrammingLanguage, selectedChapterIdx, isChapterUnlockedAtIndex, currentChapterQuests, activeCompleted]
   );
 
   const resetMapScroll = useCallback(() => {
@@ -292,8 +485,157 @@ export default function QuestsGrid() {
     return () => observer.disconnect();
   }, [currentChapterQuests.length]);
 
-  const handleSelectQuest = useCallback((quest) => setSelectedQuest(quest), []);
+  // Completed levels stay fully clickable (Task 2.1) — clicking one opens the small "replay?"
+  // confirmation instead of jumping straight into QuestModal, since re-entering a finished level
+  // means something different (practice, not first-time play).
+  const handleSelectQuest = useCallback(
+    (quest) => {
+      const isCompleted = typeof quest.id === 'number' && activeCompleted.includes(quest.id);
+      if (isCompleted) {
+        setCompletedReplayTarget(quest);
+      } else {
+        setSelectedQuest(quest);
+      }
+    },
+    [activeCompleted]
+  );
   const handleCloseModal = useCallback(() => setSelectedQuest(null), []);
+  const handleStartReplay = useCallback(() => {
+    if (!completedReplayTarget) return;
+    setPracticeQuest(completedReplayTarget);
+    setCompletedReplayTarget(null);
+  }, [completedReplayTarget]);
+  const handleClosePractice = useCallback(() => setPracticeQuest(null), []);
+
+  // Resolves a clicked node (static or already DB-backed) to real {chapterId, levelId} DB ids —
+  // find-or-create, safe to call every time a node's "+" action is used (see backend
+  // AdminController.ResolveLevel for the idempotent upsert).
+  const resolveLevelIds = useCallback(
+    async (quest, index) => {
+      if (quest.dbChapterId && quest.dbLevelId) {
+        return { chapterId: quest.dbChapterId, levelId: quest.dbLevelId };
+      }
+      const { ok, data } = await apiFetch('/api/admin/levels/resolve', {
+        method: 'POST',
+        auth: true,
+        body: {
+          track: activeProgrammingLanguage,
+          chapterOrderIndex: selectedChapterIdx,
+          chapterTitle: currentChapterMeta?.title,
+          chapterDescription: currentChapterMeta?.subtitle,
+          chapterIcon: currentChapterMeta?.icon,
+          chapterColor: currentChapterMeta?.color,
+          levelOrderIndex: index,
+          levelTitle: quest.title,
+          topic: quest.topic,
+          icon: quest.icon,
+          difficulty: DIFFICULTY_AZ_TO_EN[quest.difficulty] || 'Medium',
+          xpReward: quest.xpReward,
+          goldReward: quest.goldReward,
+          description: quest.description,
+        },
+      });
+      if (!ok || !data) throw new Error('resolve_failed');
+      return { chapterId: data.chapterId, levelId: data.levelId };
+    },
+    [activeProgrammingLanguage, selectedChapterIdx, currentChapterMeta]
+  );
+
+  const handleOpenNodeAction = useCallback((quest, index) => {
+    setNodeActionError('');
+    setNodeActionSuccess('');
+    setNodeActionTarget({ quest, index });
+  }, []);
+
+  const handleAiGenerateForNode = useCallback(async () => {
+    if (!nodeActionTarget || nodeActionBusy) return;
+    setNodeActionBusy(true);
+    setNodeActionError('');
+    setNodeActionSuccess('');
+    try {
+      const { levelId } = await resolveLevelIds(nodeActionTarget.quest, nodeActionTarget.index);
+      const { ok } = await apiFetch(`/api/admin/levels/${levelId}/generate-question`, {
+        method: 'POST',
+        auth: true,
+        body: {
+          language: activeProgrammingLanguage,
+          contentLanguage: CONTENT_LANGUAGE_NAME[language] || 'Azerbaijani',
+        },
+        timeoutMs: 48000,
+      });
+      if (!ok) {
+        setNodeActionError(t('nodeAiGenFailed'));
+        toast.error(t('questionAddFailedToast'));
+        return;
+      }
+      setNodeActionSuccess(t('nodeAiGenSuccess'));
+      toast.success(t('questionAddedSuccessToast'));
+
+      // Refresh dbLevels so this quest's dbLevelId is known locally right away — needed the first
+      // time this specific level gets resolved (see resolveLevelIds/currentChapterQuests), so
+      // reopening its quiz modal immediately plays the newly generated question without requiring
+      // a chapter switch or page reload.
+      const { ok: levelsOk, data: levelsData } = await apiFetch(
+        `/api/map/levels?track=${encodeURIComponent(activeProgrammingLanguage)}&chapterOrderIndex=${selectedChapterIdx}`,
+        { auth: true }
+      );
+      if (levelsOk && Array.isArray(levelsData)) setDbLevels(levelsData);
+
+      setTimeout(() => setNodeActionTarget(null), 1400);
+    } catch {
+      setNodeActionError(t('nodeAiGenFailed'));
+      toast.error(t('questionAddFailedToast'));
+    } finally {
+      setNodeActionBusy(false);
+    }
+  }, [nodeActionTarget, nodeActionBusy, resolveLevelIds, activeProgrammingLanguage, selectedChapterIdx, language, t]);
+
+  const handleManualAddForNode = useCallback(async () => {
+    if (!nodeActionTarget || nodeActionBusy) return;
+    setNodeActionBusy(true);
+    setNodeActionError('');
+    try {
+      const { chapterId, levelId } = await resolveLevelIds(nodeActionTarget.quest, nodeActionTarget.index);
+      requestAdminQuestTarget({
+        language: activeProgrammingLanguage,
+        chapterId,
+        levelId,
+        chapterOrderIndex: selectedChapterIdx,
+        levelOrderIndex: nodeActionTarget.index,
+        levelTitle: nodeActionTarget.quest.title,
+      });
+      setNodeActionTarget(null);
+    } catch {
+      setNodeActionError(t('nodeAiGenFailed'));
+    } finally {
+      setNodeActionBusy(false);
+    }
+  }, [nodeActionTarget, nodeActionBusy, resolveLevelIds, activeProgrammingLanguage, selectedChapterIdx, requestAdminQuestTarget, t]);
+
+  const handleCreateChapter = useCallback(async () => {
+    if (!newChapterForm.title.trim() || creatingChapter) return;
+    setCreatingChapter(true);
+    try {
+      const { ok, data } = await apiFetch('/api/admin/chapters', {
+        method: 'POST',
+        auth: true,
+        body: {
+          track: activeProgrammingLanguage,
+          title: newChapterForm.title.trim(),
+          description: newChapterForm.description.trim(),
+          baseOrderIndex: STATIC_CHAPTER_COUNT,
+        },
+      });
+      if (ok && data) {
+        setDbChapters((prev) => [...prev, data]);
+        setShowNewChapterModal(false);
+        setNewChapterForm({ title: '', description: '' });
+        setSelectedChapterIdx(data.orderIndex);
+      }
+    } finally {
+      setCreatingChapter(false);
+    }
+  }, [newChapterForm, creatingChapter, activeProgrammingLanguage]);
 
   return (
     <div className="quests-grid-root">
@@ -307,23 +649,49 @@ export default function QuestsGrid() {
               {t('mapChapterSubtitle')}
             </p>
           </div>
-          <div className="quests-chapter-tabs">
-            <button
-              type="button"
-              onClick={() => setSelectedChapterIdx(0)}
-              className={`btn btn-sm ${selectedChapterIdx === 0 ? 'btn-primary' : 'btn-outline'}`}
-            >
-              {t('chapterBasics')}
-            </button>
-            <button
-              type="button"
-              onClick={() => (isAdmin || isCh1Completed) && setSelectedChapterIdx(1)}
-              className={`btn btn-sm ${selectedChapterIdx === 1 ? 'btn-primary' : 'btn-outline'}`}
-              disabled={!isAdmin && !isCh1Completed}
-              style={{ opacity: (isAdmin || isCh1Completed) ? 1 : 0.55 }}
-            >
-              {!isAdmin && !isCh1Completed && '🔒 '}{t('chapterAdvanced')}
-            </button>
+          <div className="quests-chapter-tabs" style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+            {allChaptersMeta.map((chapterMeta) => {
+              const idx = chapterMeta.index;
+              const unlocked = isChapterUnlockedAtIndex(idx);
+              const label = idx === 0
+                ? t('chapterBasics')
+                : idx === 1
+                  ? t('chapterAdvanced')
+                  : `${idx + 1}. ${chapterMeta.title}`;
+              return (
+                <button
+                  key={idx}
+                  type="button"
+                  onClick={() => unlocked && setSelectedChapterIdx(idx)}
+                  className={`btn btn-sm ${selectedChapterIdx === idx ? 'btn-primary' : 'btn-outline'}`}
+                  disabled={!unlocked}
+                  style={{ opacity: unlocked ? 1 : 0.55 }}
+                >
+                  {!unlocked && '🔒 '}{label}
+                </button>
+              );
+            })}
+            {isAdmin && (
+              <button
+                type="button"
+                title={t('adminNewChapterBtnTitle')}
+                onClick={() => setShowNewChapterModal(true)}
+                className="btn btn-sm"
+                style={{
+                  width: '32px',
+                  height: '32px',
+                  padding: 0,
+                  borderRadius: '50%',
+                  border: '1px solid rgba(6, 182, 212, 0.6)',
+                  color: 'var(--accent-cyan, #06b6d4)',
+                  fontWeight: 900,
+                  fontSize: '1.1rem',
+                  boxShadow: '0 0 10px rgba(6, 182, 212, 0.55)',
+                }}
+              >
+                +
+              </button>
+            )}
           </div>
         </div>
 
@@ -439,6 +807,9 @@ export default function QuestsGrid() {
                 isChestClaimed={claimedChests.includes(chestId)}
                 onSelect={handleSelectQuest}
                 onClaimChest={claimTreasureChest}
+                isAdmin={isAdmin}
+                onAdminAction={handleOpenNodeAction}
+                t={t}
               />
             );
           })}
@@ -447,6 +818,139 @@ export default function QuestsGrid() {
 
       {selectedQuest && (
         <QuestModal quest={selectedQuest} onClose={handleCloseModal} />
+      )}
+
+      {/* Task 2.2 — completed-level replay confirmation */}
+      {completedReplayTarget && (
+        <div className="modal-overlay" onClick={() => setCompletedReplayTarget(null)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '380px', textAlign: 'center' }}>
+            <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem' }}>✅</div>
+            <h3 style={{ marginBottom: '0.5rem' }}>{t('levelCompletedBadgeTitle')}</h3>
+            <p style={{ margin: '0 0 0.5rem', fontWeight: 700 }}>{completedReplayTarget.title}</p>
+            <p style={{ margin: '0 0 1.5rem', fontSize: '0.85rem', color: 'var(--text-secondary)' }}>
+              {t('replayConfirmBody')}
+            </p>
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+              <button className="btn btn-outline" onClick={() => setCompletedReplayTarget(null)}>{t('cancel')}</button>
+              <button className="btn btn-primary" onClick={handleStartReplay}>{t('replayLevelBtn')}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Task 2.3 — practice/replay mode: fully interactive QuestModal that never touches real
+          progress, coins, XP, or hearts (see QuestModal's practiceMode prop). */}
+      {practiceQuest && (
+        <QuestModal quest={practiceQuest} onClose={handleClosePractice} practiceMode />
+      )}
+
+      {/* Admin: create-new-chapter modal (Task 1.1) */}
+      {showNewChapterModal && (
+        <div className="modal-overlay" onClick={() => !creatingChapter && setShowNewChapterModal(false)}>
+          <div className="modal-content" onClick={(e) => e.stopPropagation()} style={{ maxWidth: '420px' }}>
+            <h3 style={{ marginBottom: '1rem' }}>{t('adminNewChapterModalTitle')}</h3>
+            <div className="input-group">
+              <label className="input-label">{t('adminChapterTitleFieldLabel')}</label>
+              <input
+                type="text"
+                className="input-field"
+                value={newChapterForm.title}
+                onChange={(e) => setNewChapterForm((f) => ({ ...f, title: e.target.value }))}
+                autoFocus
+              />
+            </div>
+            <div className="input-group">
+              <label className="input-label">{t('adminChapterDescFieldLabel')}</label>
+              <textarea
+                className="input-field"
+                rows={2}
+                value={newChapterForm.description}
+                onChange={(e) => setNewChapterForm((f) => ({ ...f, description: e.target.value }))}
+              />
+            </div>
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: '1rem' }}>
+              <button className="btn btn-outline" onClick={() => setShowNewChapterModal(false)} disabled={creatingChapter}>
+                {t('cancel')}
+              </button>
+              <button
+                className="btn btn-primary"
+                onClick={handleCreateChapter}
+                disabled={!newChapterForm.title.trim() || creatingChapter}
+              >
+                {creatingChapter ? t('adminBroadcastSending') : t('adminCreateChapterBtn')}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Admin: level node "+" action modal (Task 1.3). Uses dedicated .node-action-* classes
+          (not the shared .btn, which forces white-space:nowrap + centered flex and was clipping
+          the wrapped card text — see index.css for the fix). */}
+      {nodeActionTarget && (
+        <div className="modal-overlay" onClick={() => !nodeActionBusy && setNodeActionTarget(null)}>
+          <div className="node-action-modal" onClick={(e) => e.stopPropagation()}>
+            <div>
+              <h3 style={{ margin: '0 0 0.25rem' }}>{t('nodeActionModalTitle')}</h3>
+              <p style={{ margin: 0, fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                {nodeActionTarget.quest.title}
+              </p>
+            </div>
+
+            <div className="node-action-card-list">
+              <button
+                type="button"
+                className="node-action-card node-action-card--ai"
+                onClick={handleAiGenerateForNode}
+                disabled={nodeActionBusy}
+              >
+                <span className="node-action-card-icon">✨</span>
+                <span className="node-action-card-body">
+                  <span className="node-action-card-title">{t('nodeActionAiTitle')}</span>
+                  <span className="node-action-card-desc">{t('nodeActionAiDesc')}</span>
+                </span>
+              </button>
+
+              <button
+                type="button"
+                className="node-action-card node-action-card--manual"
+                onClick={handleManualAddForNode}
+                disabled={nodeActionBusy}
+              >
+                <span className="node-action-card-icon">➕</span>
+                <span className="node-action-card-body">
+                  <span className="node-action-card-title">{t('nodeActionManualTitle')}</span>
+                  <span className="node-action-card-desc">{t('nodeActionManualDesc')}</span>
+                </span>
+              </button>
+            </div>
+
+            {nodeActionBusy && (
+              <div style={{ fontSize: '0.8rem', color: 'var(--accent-purple-light)', fontWeight: 600 }}>
+                ⚡ {t('nodeAiGenerating')}
+              </div>
+            )}
+            {nodeActionError && (
+              <div style={{ fontSize: '0.8rem', color: 'var(--accent-red)', fontWeight: 600 }}>
+                ⚠️ {nodeActionError}
+              </div>
+            )}
+            {nodeActionSuccess && (
+              <div style={{ fontSize: '0.8rem', color: 'var(--accent-green)', fontWeight: 600 }}>
+                {nodeActionSuccess}
+              </div>
+            )}
+
+            <button
+              type="button"
+              className="node-action-cancel-btn"
+              onClick={() => setNodeActionTarget(null)}
+              disabled={nodeActionBusy}
+            >
+              {t('cancel')}
+            </button>
+          </div>
+        </div>
       )}
     </div>
   );

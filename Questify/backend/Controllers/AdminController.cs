@@ -65,6 +65,20 @@ public class AdminController : ControllerBase
                 return StatusCode(StatusCodes.Status502BadGateway, new { message = "AI sual yarada bilmədi. Zəhmət olmasa yenidən cəhd edin." });
             }
 
+            // Echo the target node back so the form can bind this preview to the exact map node
+            // the admin selected (see GenerateQuestionRequestDto.ChapterId/LevelId) — this call
+            // never persists anything itself, that only happens on the later POST /api/admin/questions.
+            if (request.ChapterId.HasValue && request.LevelId.HasValue)
+            {
+                var targetLevel = await _context.Levels.FindAsync(request.LevelId.Value);
+                if (targetLevel is not null && targetLevel.ChapterId == request.ChapterId.Value)
+                {
+                    generated.ChapterId = request.ChapterId;
+                    generated.LevelId = request.LevelId;
+                    generated.LevelTitle = targetLevel.Title;
+                }
+            }
+
             return Ok(generated);
         }
         catch (OperationCanceledException) when (cts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
@@ -78,6 +92,285 @@ public class AdminController : ControllerBase
             return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Gözlənilməz xəta baş verdi." });
         }
     }
+
+    // POST /api/admin/chapters — used by the Chapter Map's "+" button (Task 1.1) to create a
+    // brand-new chapter for a track. Always appended after whatever chapters already exist for
+    // that track (static + DB), never inserted in the middle.
+    [HttpPost("chapters")]
+    public async Task<IActionResult> CreateChapter([FromBody] CreateChapterDto request)
+    {
+        if (request is null || string.IsNullOrWhiteSpace(request.Track) || string.IsNullOrWhiteSpace(request.Title))
+            return BadRequest(new { message = "Dil (track) və fəsil başlığı tələb olunur." });
+
+        var track = request.Track.Trim();
+        var existingMax = await _context.Chapters
+            .Where(c => c.Track == track)
+            .Select(c => (int?)c.OrderIndex)
+            .MaxAsync();
+        // Never land below BaseOrderIndex, even if the only DB rows so far are low-index "shadow"
+        // chapters materialized by ResolveLevel (e.g. chapter 0 got shadow-resolved by a node "+"
+        // click) — otherwise the next DB chapter would collide with a still-unmaterialized static
+        // chapter's index (e.g. land on 1, colliding with the static "Fəsil 2").
+        var floor = Math.Max(request.BaseOrderIndex, 0) - 1;
+        var orderIndex = Math.Max(existingMax ?? -1, floor) + 1;
+
+        var chapter = new Chapter
+        {
+            Track = track,
+            OrderIndex = orderIndex,
+            Title = request.Title.Trim(),
+            Description = request.Description?.Trim(),
+            Icon = string.IsNullOrWhiteSpace(request.Icon) ? "📦" : request.Icon.Trim(),
+            Color = string.IsNullOrWhiteSpace(request.Color) ? "#8b5cf6" : request.Color.Trim()
+        };
+        _context.Chapters.Add(chapter);
+        await _context.SaveChangesAsync();
+
+        return Ok(new ChapterDto
+        {
+            Id = chapter.Id,
+            Track = chapter.Track,
+            OrderIndex = chapter.OrderIndex,
+            Title = chapter.Title,
+            Description = chapter.Description,
+            Icon = chapter.Icon,
+            Color = chapter.Color
+        });
+    }
+
+    // POST /api/admin/levels — creates a brand-new level under an existing (DB) chapter. Used when
+    // the admin form's Level dropdown is set to "-- Create New Level --" for a chapter that already
+    // has a real ChapterId (either a DB-only chapter, or a static one already resolved once via
+    // ResolveLevel below).
+    [HttpPost("levels")]
+    public async Task<IActionResult> CreateLevel([FromBody] CreateLevelDto request)
+    {
+        if (request is null || request.ChapterId <= 0 || string.IsNullOrWhiteSpace(request.Title))
+            return BadRequest(new { message = "Fəsil (chapterId) və səviyyə başlığı tələb olunur." });
+
+        var chapter = await _context.Chapters.FindAsync(request.ChapterId);
+        if (chapter is null) return NotFound(new { message = "Fəsil tapılmadı." });
+
+        var existingMax = await _context.Levels
+            .Where(l => l.ChapterId == request.ChapterId)
+            .Select(l => (int?)l.OrderIndex)
+            .MaxAsync();
+        // Same floor-vs-max reasoning as CreateChapter above — a low-index shadow level (from
+        // ResolveLevel) must never push a "new level" below the static level count already known
+        // to exist in this chapter.
+        var floor = Math.Max(request.BaseOrderIndex, 0) - 1;
+        var orderIndex = Math.Max(existingMax ?? -1, floor) + 1;
+
+        var level = new Level
+        {
+            ChapterId = request.ChapterId,
+            OrderIndex = orderIndex,
+            Title = request.Title.Trim(),
+            Topic = string.IsNullOrWhiteSpace(request.Topic) ? "General" : request.Topic.Trim(),
+            Icon = string.IsNullOrWhiteSpace(request.Icon) ? "📝" : request.Icon.Trim(),
+            Difficulty = string.IsNullOrWhiteSpace(request.Difficulty) ? "Easy" : request.Difficulty.Trim(),
+            XpReward = request.XpReward ?? 100,
+            GoldReward = request.GoldReward ?? 50,
+            Description = request.Description?.Trim()
+        };
+        _context.Levels.Add(level);
+        await _context.SaveChangesAsync();
+
+        return Ok(new LevelDto
+        {
+            Id = level.Id,
+            ChapterId = level.ChapterId,
+            OrderIndex = level.OrderIndex,
+            Title = level.Title,
+            Topic = level.Topic,
+            Icon = level.Icon,
+            Difficulty = level.Difficulty,
+            XpReward = level.XpReward,
+            GoldReward = level.GoldReward,
+            Description = level.Description
+        });
+    }
+
+    // POST /api/admin/levels/resolve — find-or-create the Chapter+Level identified by
+    // (Track, ChapterOrderIndex, LevelOrderIndex). This is what lets the map node "+" button and
+    // the admin form's cascading dropdowns work uniformly for BOTH brand-new DB chapters/levels
+    // AND the 120 pre-existing static levels in mockData.js — the very first time an admin targets
+    // one of those static levels, this materializes a matching DB row (idempotent afterwards) so a
+    // real LevelId exists to bind a Question to.
+    [HttpPost("levels/resolve")]
+    public async Task<IActionResult> ResolveLevel([FromBody] ResolveLevelDto request)
+    {
+        if (request is null || string.IsNullOrWhiteSpace(request.Track))
+            return BadRequest(new { message = "Track tələb olunur." });
+
+        var track = request.Track.Trim();
+
+        var chapter = await _context.Chapters.FirstOrDefaultAsync(c => c.Track == track && c.OrderIndex == request.ChapterOrderIndex);
+        if (chapter is null)
+        {
+            chapter = new Chapter
+            {
+                Track = track,
+                OrderIndex = request.ChapterOrderIndex,
+                Title = string.IsNullOrWhiteSpace(request.ChapterTitle) ? $"Fəsil {request.ChapterOrderIndex + 1}" : request.ChapterTitle.Trim(),
+                Description = request.ChapterDescription?.Trim(),
+                Icon = string.IsNullOrWhiteSpace(request.ChapterIcon) ? "📦" : request.ChapterIcon.Trim(),
+                Color = string.IsNullOrWhiteSpace(request.ChapterColor) ? "#8b5cf6" : request.ChapterColor.Trim()
+            };
+            _context.Chapters.Add(chapter);
+            await _context.SaveChangesAsync();
+        }
+
+        var level = await _context.Levels.FirstOrDefaultAsync(l => l.ChapterId == chapter.Id && l.OrderIndex == request.LevelOrderIndex);
+        if (level is null)
+        {
+            level = new Level
+            {
+                ChapterId = chapter.Id,
+                OrderIndex = request.LevelOrderIndex,
+                Title = string.IsNullOrWhiteSpace(request.LevelTitle) ? $"Level {request.LevelOrderIndex + 1}" : request.LevelTitle.Trim(),
+                Topic = string.IsNullOrWhiteSpace(request.Topic) ? "General" : request.Topic.Trim(),
+                Icon = string.IsNullOrWhiteSpace(request.Icon) ? "📝" : request.Icon.Trim(),
+                Difficulty = string.IsNullOrWhiteSpace(request.Difficulty) ? "Easy" : request.Difficulty.Trim(),
+                XpReward = request.XpReward ?? 100,
+                GoldReward = request.GoldReward ?? 50,
+                Description = request.Description?.Trim()
+            };
+            _context.Levels.Add(level);
+            await _context.SaveChangesAsync();
+        }
+
+        return Ok(new ResolvedLevelDto { ChapterId = chapter.Id, LevelId = level.Id });
+    }
+
+    // POST /api/admin/questions — persists a question bound to an already-resolved LevelId. This
+    // is what the manual "Add Question Manually" admin form (Task 2) submits to.
+    [HttpPost("questions")]
+    public async Task<IActionResult> CreateQuestion([FromBody] CreateQuestionDto request)
+    {
+        if (request is null || request.LevelId <= 0 || string.IsNullOrWhiteSpace(request.QuestionText))
+            return BadRequest(new { message = "Səviyyə (levelId) və sual mətni tələb olunur." });
+
+        if (string.IsNullOrWhiteSpace(request.Options?.A) || string.IsNullOrWhiteSpace(request.Options?.B))
+            return BadRequest(new { message = "A və B variantları tələb olunur." });
+
+        var allowedOptions = new[] { "A", "B", "C", "D" };
+        if (!allowedOptions.Contains(request.CorrectOption))
+            return BadRequest(new { message = "Düzgün variant A, B, C və ya D olmalıdır." });
+
+        var level = await _context.Levels.Include(l => l.Chapter).FirstOrDefaultAsync(l => l.Id == request.LevelId);
+        if (level is null) return NotFound(new { message = "Səviyyə tapılmadı." });
+
+        // Cross-check the caller's own understanding of which chapter/track this level belongs to
+        // against the level's actual Chapter — catches a stale client-side selection (e.g. the
+        // admin switched Language/Chapter in the form after LevelId was resolved but before
+        // submitting) instead of silently writing the question onto the wrong node.
+        if (request.ChapterId.HasValue && request.ChapterId.Value != level.ChapterId)
+            return BadRequest(new { message = "chapterId seçilmiş səviyyə ilə uyğun gəlmir." });
+
+        if (!string.IsNullOrWhiteSpace(request.Language) &&
+            !string.Equals(request.Language.Trim(), level.Chapter.Track, StringComparison.OrdinalIgnoreCase))
+            return BadRequest(new { message = "language seçilmiş səviyyənin kursu ilə uyğun gəlmir." });
+
+        // The correct option must actually point at a non-empty answer — otherwise a form bug
+        // (or a manually-crafted request) could bind "correct" to a blank C/D slot.
+        var selectedOptionText = request.CorrectOption switch
+        {
+            "A" => request.Options.A,
+            "B" => request.Options.B,
+            "C" => request.Options.C,
+            "D" => request.Options.D,
+            _ => null
+        };
+        if (string.IsNullOrWhiteSpace(selectedOptionText))
+            return BadRequest(new { message = "Düzgün variant boş ola bilməz." });
+
+        var question = new Question
+        {
+            LevelId = level.Id,
+            QuestionText = request.QuestionText.Trim(),
+            OptionA = request.Options.A.Trim(),
+            OptionB = request.Options.B.Trim(),
+            OptionC = request.Options.C?.Trim() ?? string.Empty,
+            OptionD = request.Options.D?.Trim() ?? string.Empty,
+            CorrectOption = request.CorrectOption,
+            Hint = request.Hint?.Trim()
+        };
+        _context.Questions.Add(question);
+        await _context.SaveChangesAsync();
+
+        return Ok(ToQuestionRecordDto(question, level));
+    }
+
+    // POST /api/admin/levels/{levelId}/generate-question — Task 1's node "+" button, Option A.
+    // Generates one AI question for this exact level's topic/difficulty and immediately persists
+    // it bound to LevelId — unlike POST /api/admin/generate-question (preview-only), this one
+    // both generates AND binds in a single call.
+    [HttpPost("levels/{levelId:int}/generate-question")]
+    public async Task<IActionResult> GenerateQuestionForLevel(int levelId, [FromBody] GenerateLevelQuestionDto request, CancellationToken cancellationToken)
+    {
+        var level = await _context.Levels.Include(l => l.Chapter).FirstOrDefaultAsync(l => l.Id == levelId);
+        if (level is null) return NotFound(new { message = "Səviyyə tapılmadı." });
+
+        var language = string.IsNullOrWhiteSpace(request?.Language) ? level.Chapter.Track : request!.Language.Trim();
+
+        using var cts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        cts.CancelAfter(AiRequestDeadline);
+
+        try
+        {
+            var (generated, debugError) = await _aiService.GenerateQuestionAsync(
+                language, level.Topic, level.Difficulty, request?.ContentLanguage?.Trim(), cts.Token);
+
+            if (generated is null)
+            {
+                _logger.LogError("AI generate-for-level failed — raw reason: {DebugError}", debugError);
+                return StatusCode(StatusCodes.Status502BadGateway, new { message = "AI sual yarada bilmədi. Zəhmət olmasa yenidən cəhd edin." });
+            }
+
+            var options = generated.Options ?? new List<string>();
+            var question = new Question
+            {
+                LevelId = level.Id,
+                QuestionText = generated.Question,
+                OptionA = options.ElementAtOrDefault(0) ?? string.Empty,
+                OptionB = options.ElementAtOrDefault(1) ?? string.Empty,
+                OptionC = options.ElementAtOrDefault(2) ?? string.Empty,
+                OptionD = options.ElementAtOrDefault(3) ?? string.Empty,
+                CorrectOption = allowedOptionLetters.ElementAtOrDefault(generated.CorrectIndex) ?? "A",
+                Hint = generated.Hint
+            };
+            _context.Questions.Add(question);
+            await _context.SaveChangesAsync();
+
+            return Ok(ToQuestionRecordDto(question, level, language));
+        }
+        catch (OperationCanceledException) when (cts.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            _logger.LogWarning("AI generate-for-level exceeded the {Deadline}s deadline.", AiRequestDeadline.TotalSeconds);
+            return StatusCode(StatusCodes.Status504GatewayTimeout, new { message = "AI sorğusu vaxt aşımına uğradı. Yenidən cəhd edin." });
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Unexpected error generating AI question for level {LevelId}.", levelId);
+            return StatusCode(StatusCodes.Status500InternalServerError, new { message = "Gözlənilməz xəta baş verdi." });
+        }
+    }
+
+    private static readonly string[] allowedOptionLetters = { "A", "B", "C", "D" };
+
+    private static QuestionRecordDto ToQuestionRecordDto(Question question, Level level, string? language = null) => new()
+    {
+        Id = question.Id,
+        Language = language ?? level.Chapter.Track,
+        ChapterId = level.ChapterId,
+        LevelId = level.Id,
+        LevelTitle = level.Title,
+        QuestionText = question.QuestionText,
+        Options = new QuestionOptionsDto { A = question.OptionA, B = question.OptionB, C = question.OptionC, D = question.OptionD },
+        CorrectOption = question.CorrectOption,
+        Hint = question.Hint
+    };
 
     [HttpGet("dashboard")]
     public IActionResult GetDashboard()

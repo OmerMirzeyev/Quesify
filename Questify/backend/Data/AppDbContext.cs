@@ -19,6 +19,9 @@ public class AppDbContext : DbContext
     public DbSet<Badge> Badges => Set<Badge>();
     public DbSet<UserBadge> UserBadges => Set<UserBadge>();
     public DbSet<DirectMessage> DirectMessages => Set<DirectMessage>();
+    public DbSet<Chapter> Chapters => Set<Chapter>();
+    public DbSet<Level> Levels => Set<Level>();
+    public DbSet<Question> Questions => Set<Question>();
 
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
@@ -84,5 +87,25 @@ public class AppDbContext : DbContext
 
         modelBuilder.Entity<DirectMessage>()
             .HasIndex(m => new { m.ReceiverId, m.SenderId });
+
+        modelBuilder.Entity<Chapter>()
+            .HasIndex(c => new { c.Track, c.OrderIndex })
+            .IsUnique();
+
+        modelBuilder.Entity<Level>()
+            .HasOne(l => l.Chapter)
+            .WithMany(c => c.Levels)
+            .HasForeignKey(l => l.ChapterId)
+            .OnDelete(DeleteBehavior.Cascade);
+
+        modelBuilder.Entity<Level>()
+            .HasIndex(l => new { l.ChapterId, l.OrderIndex })
+            .IsUnique();
+
+        modelBuilder.Entity<Question>()
+            .HasOne(q => q.Level)
+            .WithMany(l => l.Questions)
+            .HasForeignKey(q => q.LevelId)
+            .OnDelete(DeleteBehavior.Cascade);
     }
 }

@@ -1,8 +1,13 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { PlusCircle, Trash2, Minus, Plus, Infinity as InfinityIcon, Save } from 'lucide-react';
+import { toast } from 'sonner';
 import { useApp } from '../../context/AppContext';
 import { isAdminRole } from '../../utils/storage';
 import { apiFetch } from '../../utils/api';
+import { QUESTS_BY_CHAPTER, CHAPTER_META } from '../../data/mockData';
+
+const DIFFICULTY_AZ_TO_EN = { Asan: 'Easy', Orta: 'Medium', Çətin: 'Hard' };
+const OPTION_LETTERS = ['A', 'B', 'C', 'D'];
 
 const SHOP_ITEM_TYPE_OPTS = ['avatar', 'badge', 'potion_heart', 'joker_5050', 'streak_freeze', 'double_xp', 'time_freeze', 'hint_card', 'answer_change', 'frame', 'theme'];
 
@@ -66,9 +71,10 @@ const CONTENT_LANGUAGE_NAME = {
 };
 
 export default function AdminPanel() {
-  const { usersList, updateUserInfo, deleteUser, addQuest, quests, t, language,
+  const { usersList, updateUserInfo, deleteUser, t, language,
           adminBanUser, adminUnbanUser, adminTimeoutUser, adminRemoveTimeout, adminBroadcast,
-          dynamicShopItems, adminAddShopItem, adminUpdateShopItem, adminDeleteShopItem, adminSetShopItemStock } = useApp();
+          dynamicShopItems, adminAddShopItem, adminUpdateShopItem, adminDeleteShopItem, adminSetShopItemStock,
+          pendingAdminQuestTarget, setPendingAdminQuestTarget } = useApp();
   const [activeAdminTab, setActiveAdminTab] = useState('users');
   const [timeoutMinutes, setTimeoutMinutes] = useState(10);
   const [timeoutingUserId, setTimeoutingUserId] = useState(null);
@@ -131,7 +137,6 @@ export default function AdminPanel() {
   // Quest form states
   const [questForm, setQuestForm] = useState({
     targetLanguage: 'C#', // Target programming track
-    targetLevelId: '', // If empty, creates new level
     title: '',
     topic: 'Loops', // Default topic
     icon: '⚙️',
@@ -157,6 +162,128 @@ export default function AdminPanel() {
   const [aiWizardDifficulty, setAiWizardDifficulty] = useState('Easy'); // 'Easy' | 'Medium' | 'Hard'
   const [aiWizardLang, setAiWizardLang] = useState('C#');
 
+  // ── Cascading Language → Chapter → Level selection (Task 2.1) ──────────────────────────────
+  const [chapterOrderIndex, setChapterOrderIndex] = useState(0);
+  // '' = nothing chosen yet, 'new' = create a brand-new level (DB chapters only), otherwise the
+  // string form of a level's OrderIndex within the selected chapter.
+  const [levelSelection, setLevelSelection] = useState('');
+  const [adminDbChapters, setAdminDbChapters] = useState([]);
+  const [adminDbLevels, setAdminDbLevels] = useState([]);
+  // Real backend {chapterId, levelId} once the current Language/Chapter/Level selection has been
+  // resolved (find-or-create) — null while nothing concrete is selected yet, or while resolving.
+  const [resolvedTarget, setResolvedTarget] = useState(null);
+  const [resolving, setResolving] = useState(false);
+  const [targetPrefillNotice, setTargetPrefillNotice] = useState('');
+  const [submitBusy, setSubmitBusy] = useState(false);
+  const [submitError, setSubmitError] = useState('');
+
+  // One-shot: pick up a target handed off from the Chapter Map's node "+" button
+  // ("Add Question Manually" — Task 1.3 Option B) and pre-select it here.
+  useEffect(() => {
+    if (!pendingAdminQuestTarget) return;
+    const target = pendingAdminQuestTarget;
+    setActiveAdminTab('quests');
+    setQuestForm((prev) => ({ ...prev, targetLanguage: target.language }));
+    setChapterOrderIndex(target.chapterOrderIndex);
+    setLevelSelection(String(target.levelOrderIndex));
+    setResolvedTarget({ chapterId: target.chapterId, levelId: target.levelId });
+    const chapterLabel = target.chapterOrderIndex === 0 ? t('chapterBasics')
+      : target.chapterOrderIndex === 1 ? t('chapterAdvanced')
+        : `#${target.chapterOrderIndex + 1}`;
+    setTargetPrefillNotice(t('adminTargetPrefilledNotice', { chapter: chapterLabel, level: target.levelTitle }));
+    setPendingAdminQuestTarget(null);
+  }, [pendingAdminQuestTarget, setPendingAdminQuestTarget, t]);
+
+  // Admin-created extra chapters for the currently selected track.
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch(`/api/map/chapters?track=${encodeURIComponent(questForm.targetLanguage)}`, { auth: true })
+      .then(({ ok, data }) => { if (!cancelled && ok && Array.isArray(data)) setAdminDbChapters(data); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [questForm.targetLanguage]);
+
+  // Admin-created extra levels for the currently selected chapter.
+  useEffect(() => {
+    let cancelled = false;
+    apiFetch(
+      `/api/map/levels?track=${encodeURIComponent(questForm.targetLanguage)}&chapterOrderIndex=${chapterOrderIndex}`,
+      { auth: true }
+    )
+      .then(({ ok, data }) => { if (!cancelled && ok && Array.isArray(data)) setAdminDbLevels(data); })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [questForm.targetLanguage, chapterOrderIndex]);
+
+  // `title` stays the raw human name (used as ResolveLevel's chapterTitle payload); `label` is the
+  // fully-formatted dropdown display string. Keeping them separate is what fixes the "1. 1.
+  // Əsaslar" bug — t('chapterBasics')/t('chapterAdvanced') already come back numbered ("1.
+  // Əsaslar"), so prepending another "{index+1}. " on top of that (as the option rendering used
+  // to do directly on `title`) double-numbered only the two static chapters.
+  const chapterOptions = useMemo(() => {
+    const staticMeta = (CHAPTER_META[questForm.targetLanguage] || []).map((c, idx) => {
+      const index = c.index ?? idx;
+      const label = index === 0 ? t('chapterBasics') : index === 1 ? t('chapterAdvanced') : `${index + 1}. ${c.title}`;
+      return { index, title: c.title, label, dbId: null };
+    });
+    const staticIndices = new Set(staticMeta.map((c) => c.index));
+    const dbMeta = adminDbChapters
+      .filter((c) => !staticIndices.has(c.orderIndex))
+      .map((c) => ({ index: c.orderIndex, title: c.title, label: `${c.orderIndex + 1}. ${c.title}`, dbId: c.id }));
+    return [...staticMeta, ...dbMeta].sort((a, b) => a.index - b.index);
+  }, [questForm.targetLanguage, adminDbChapters, t]);
+
+  const selectedChapterOption = chapterOptions.find((c) => c.index === chapterOrderIndex) || null;
+  const isDbOnlyChapter = !!selectedChapterOption?.dbId;
+
+  const levelOptions = useMemo(() => {
+    const staticLevels = (QUESTS_BY_CHAPTER[questForm.targetLanguage]?.[chapterOrderIndex] || [])
+      .map((q, idx) => ({ orderIndex: idx, title: q.title, topic: q.topic, icon: q.icon, difficulty: q.difficulty, xpReward: q.xpReward, goldReward: q.goldReward, description: q.description }));
+    const staticOrderIndices = new Set(staticLevels.map((l) => l.orderIndex));
+    const dbLevels = adminDbLevels
+      .filter((l) => !staticOrderIndices.has(l.orderIndex))
+      .map((l) => ({ orderIndex: l.orderIndex, title: l.title, topic: l.topic, icon: l.icon, difficulty: l.difficulty, xpReward: l.xpReward, goldReward: l.goldReward, description: l.description }));
+    return [...staticLevels, ...dbLevels].sort((a, b) => a.orderIndex - b.orderIndex);
+  }, [questForm.targetLanguage, chapterOrderIndex, adminDbLevels]);
+
+  // Whenever a concrete existing level is selected, eagerly resolve it to real backend ids so
+  // both the "AI ilə Doldur" payload and the final submit already have {chapterId, levelId}.
+  useEffect(() => {
+    if (levelSelection === '' || levelSelection === 'new') {
+      setResolvedTarget(null);
+      return undefined;
+    }
+    const levelOrderIndex = Number(levelSelection);
+    const levelOpt = levelOptions.find((l) => l.orderIndex === levelOrderIndex);
+    if (!levelOpt) return undefined;
+
+    let cancelled = false;
+    setResolving(true);
+    apiFetch('/api/admin/levels/resolve', {
+      method: 'POST',
+      auth: true,
+      body: {
+        track: questForm.targetLanguage,
+        chapterOrderIndex,
+        chapterTitle: selectedChapterOption?.title,
+        levelOrderIndex,
+        levelTitle: levelOpt.title,
+        topic: levelOpt.topic,
+        icon: levelOpt.icon,
+        difficulty: DIFFICULTY_AZ_TO_EN[levelOpt.difficulty] || levelOpt.difficulty || 'Medium',
+        xpReward: levelOpt.xpReward,
+        goldReward: levelOpt.goldReward,
+        description: levelOpt.description,
+      },
+    })
+      .then(({ ok, data }) => {
+        if (!cancelled && ok && data) setResolvedTarget({ chapterId: data.chapterId, levelId: data.levelId });
+      })
+      .finally(() => { if (!cancelled) setResolving(false); });
+    return () => { cancelled = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [levelSelection, chapterOrderIndex, questForm.targetLanguage]);
+
   const triggerAiGenerate = async () => {
     if (aiWizardLoading) return;
     setAiWizardError('');
@@ -165,6 +292,9 @@ export default function AdminPanel() {
     try {
       // Longer than the backend's own 45s deadline (AdminController.AiRequestDeadline) so a
       // clean timeout error from the server has a chance to arrive before the client gives up.
+      // Task 2.2 — include the resolved {chapterId, levelId} of whatever level is currently
+      // selected below (if any) so a generated question always previews against the exact node
+      // the admin is targeting; the backend echoes them straight back in the response.
       const { ok, data } = await apiFetch('/api/admin/generate-question', {
         method: 'POST',
         auth: true,
@@ -173,6 +303,7 @@ export default function AdminPanel() {
           topic: aiWizardTopic,
           difficulty: aiWizardDifficulty,
           contentLanguage: CONTENT_LANGUAGE_NAME[language] || 'Azerbaijani',
+          ...(resolvedTarget ? { chapterId: resolvedTarget.chapterId, levelId: resolvedTarget.levelId } : {}),
         },
         timeoutMs: 48000,
       });
@@ -192,7 +323,6 @@ export default function AdminPanel() {
       setQuestForm(prev => ({
         ...prev,
         targetLanguage: aiWizardLang,
-        targetLevelId: '', // create new level
         title: data.title || `${aiWizardLang} — ${aiWizardTopic} Sintaksisi`,
         topic: aiWizardTopic,
         difficulty: displayDifficulty,
@@ -215,41 +345,107 @@ export default function AdminPanel() {
     }
   };
 
-  const handleQuestSubmit = (e) => {
+  // Persists the question to the exact map node selected via the cascading Language → Chapter →
+  // Level form above (Task 2). Creating a brand-new level ("-- Create New Level --") is only
+  // offered for DB-backed chapters, where a real chapterId is already known — see isDbOnlyChapter.
+  const handleQuestSubmit = async (e) => {
     e.preventDefault();
-    if (!questForm.question || !questForm.optionA) {
+    if (!questForm.question || !questForm.optionA || !questForm.optionB) {
+      alert(t('adminFillRequiredAlert'));
+      return;
+    }
+    if (levelSelection === '') {
       alert(t('adminFillRequiredAlert'));
       return;
     }
 
-    const newQuestData = {
-      title: questForm.title,
-      topic: questForm.topic || 'General',
-      icon: questForm.icon || '📝',
-      difficulty: questForm.difficulty,
-      xpReward: Number(questForm.xpReward),
-      goldReward: Number(questForm.goldReward),
-      description: questForm.description || t('adminDefaultQuestDesc'),
-      challenge: {
-        question: questForm.question,
-        options: [questForm.optionA, questForm.optionB, questForm.optionC, questForm.optionD].filter(Boolean),
-        correctIndex: Number(questForm.correctIndex),
-        hint: questForm.hint || t('adminDefaultHint')
+    setSubmitBusy(true);
+    setSubmitError('');
+    try {
+      let { chapterId, levelId } = resolvedTarget || {};
+
+      if (levelSelection === 'new') {
+        if (!isDbOnlyChapter || !selectedChapterOption?.dbId) {
+          setSubmitError(t('adminFillRequiredAlert'));
+          return;
+        }
+        const { ok, data } = await apiFetch('/api/admin/levels', {
+          method: 'POST',
+          auth: true,
+          body: {
+            chapterId: selectedChapterOption.dbId,
+            title: questForm.title,
+            topic: questForm.topic || 'General',
+            icon: questForm.icon || '📝',
+            difficulty: DIFFICULTY_AZ_TO_EN[questForm.difficulty] || 'Medium',
+            xpReward: Number(questForm.xpReward),
+            goldReward: Number(questForm.goldReward),
+            description: questForm.description || t('adminDefaultQuestDesc'),
+            // Explicit max+1 rather than levelOptions.length — identical today (levels are always
+            // contiguous, there's no delete endpoint), but doesn't silently reset numbering back
+            // toward 1 if a gap is ever introduced later. The backend re-derives/clamps this same
+            // way server-side (see AdminController.CreateLevel), this is just belt-and-suspenders.
+            baseOrderIndex: levelOptions.length > 0
+              ? Math.max(...levelOptions.map((l) => l.orderIndex ?? 0)) + 1
+              : 0,
+          },
+        });
+        if (!ok || !data) throw new Error('create_level_failed');
+        chapterId = selectedChapterOption.dbId;
+        levelId = data.id;
       }
-    };
 
-    addQuest(newQuestData, questForm.targetLevelId, questForm.targetLanguage);
+      if (!chapterId || !levelId) throw new Error('no_resolved_target');
 
-    setQuestForm(prev => ({
-      ...prev,
-      question: '',
-      optionA: '',
-      optionB: '',
-      optionC: '',
-      optionD: '',
-      correctIndex: 0,
-      hint: ''
-    }));
+      // chapterId/language are strictly cross-checked server-side against the resolved LevelId's
+      // actual Chapter (see AdminController.CreateQuestion) — catches a stale selection instead of
+      // silently writing the question onto the wrong node.
+      const { ok } = await apiFetch('/api/admin/questions', {
+        method: 'POST',
+        auth: true,
+        body: {
+          levelId,
+          chapterId,
+          language: questForm.targetLanguage,
+          questionText: questForm.question,
+          options: {
+            A: questForm.optionA,
+            B: questForm.optionB,
+            C: questForm.optionC,
+            D: questForm.optionD,
+          },
+          correctOption: OPTION_LETTERS[Number(questForm.correctIndex)] || 'A',
+          hint: questForm.hint || t('adminDefaultHint'),
+        },
+      });
+      if (!ok) throw new Error('create_question_failed');
+
+      toast.success(t('questionAddedSuccessToast'));
+      setQuestForm(prev => ({
+        ...prev,
+        question: '',
+        optionA: '',
+        optionB: '',
+        optionC: '',
+        optionD: '',
+        correctIndex: 0,
+        hint: ''
+      }));
+      // Refresh the level list so a freshly-created level immediately shows up in the dropdown.
+      if (levelSelection === 'new') {
+        const { ok: levelsOk, data: levelsData } = await apiFetch(
+          `/api/map/levels?track=${encodeURIComponent(questForm.targetLanguage)}&chapterOrderIndex=${chapterOrderIndex}`,
+          { auth: true }
+        );
+        if (levelsOk && Array.isArray(levelsData)) setAdminDbLevels(levelsData);
+        setLevelSelection(String(levelOptions.length));
+      }
+    } catch {
+      setSubmitError(t('adminAiConnLostMsg'));
+      toast.error(t('questionAddFailedToast'));
+    } finally {
+      setSubmitBusy(false);
+    }
   };
 
   const openEditModal = (user) => {
@@ -511,7 +707,13 @@ export default function AdminPanel() {
             )}
           </div>
 
-          {/* Programming Track Selector */}
+          {targetPrefillNotice && (
+            <div style={{ padding: '0.75rem 1rem', background: 'rgba(6, 182, 212, 0.08)', border: '1px solid rgba(6, 182, 212, 0.35)', borderRadius: 'var(--border-radius-sm)', fontSize: '0.82rem', fontWeight: 600, color: 'var(--accent-cyan)' }}>
+              {targetPrefillNotice}
+            </div>
+          )}
+
+          {/* Cascading Language → Chapter → Level selector (Task 2.1) */}
           <div className="input-group">
             <label className="input-label">🎯 {t('adminSelectTrack')}</label>
             <div style={{ display: 'flex', gap: '0.5rem' }}>
@@ -521,7 +723,11 @@ export default function AdminPanel() {
                   type="button"
                   className={`btn btn-sm ${questForm.targetLanguage === lang ? 'btn-primary' : 'btn-outline'}`}
                   style={{ flex: 1, fontWeight: 700, boxShadow: questForm.targetLanguage === lang ? 'var(--glow-purple)' : 'none' }}
-                  onClick={() => setQuestForm({ ...questForm, targetLanguage: lang, targetLevelId: '' })}
+                  onClick={() => {
+                    setQuestForm({ ...questForm, targetLanguage: lang });
+                    setChapterOrderIndex(0);
+                    setLevelSelection('');
+                  }}
                 >
                   {lang}
                 </button>
@@ -530,17 +736,39 @@ export default function AdminPanel() {
           </div>
 
           <div className="input-group">
+            <label className="input-label">{t('selectChapterLabel')}</label>
+            <select
+              className="input-field"
+              value={chapterOrderIndex}
+              onChange={(e) => {
+                setChapterOrderIndex(Number(e.target.value));
+                setLevelSelection('');
+              }}
+            >
+              {chapterOptions.map((c) => (
+                <option key={c.index} value={c.index}>{c.label}</option>
+              ))}
+            </select>
+          </div>
+
+          <div className="input-group">
             <label className="input-label">{t('selectLevel')} ({questForm.targetLanguage})</label>
             <select
               className="input-field"
-              value={questForm.targetLevelId}
-              onChange={e => setQuestForm({ ...questForm, targetLevelId: e.target.value })}
+              value={levelSelection}
+              onChange={(e) => setLevelSelection(e.target.value)}
             >
-              <option value="">{t('adminNewLevelOption', { lang: questForm.targetLanguage })}</option>
-              {(quests[questForm.targetLanguage] || []).map(q => (
-                <option key={q.id} value={q.id}>{q.levelName} - {q.title}</option>
+              <option value="">{t('adminLevelPlaceholderOption')}</option>
+              {levelOptions.map((lvl) => (
+                <option key={lvl.orderIndex} value={lvl.orderIndex}>{lvl.orderIndex + 1}. {lvl.title}</option>
               ))}
+              {isDbOnlyChapter && (
+                <option value="new">{t('adminNewLevelOption', { lang: questForm.targetLanguage })}</option>
+              )}
             </select>
+            {resolving && (
+              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.35rem' }}>⏳ {t('loading')}</div>
+            )}
           </div>
 
           {/* Sual məlumatları */}
@@ -588,8 +816,19 @@ export default function AdminPanel() {
             </div>
           </div>
 
-          <button type="submit" className="btn btn-primary btn-lg" style={{ alignSelf: 'flex-end', minWidth: '180px' }}>
-            ➕ {t('addQuestionToLevel')}
+          {submitError && (
+            <div style={{ color: 'var(--accent-red)', fontSize: '0.78rem', fontWeight: 600, alignSelf: 'flex-end' }}>
+              ⚠️ {submitError}
+            </div>
+          )}
+
+          <button
+            type="submit"
+            className="btn btn-primary btn-lg"
+            style={{ alignSelf: 'flex-end', minWidth: '180px', opacity: submitBusy ? 0.7 : 1 }}
+            disabled={submitBusy || levelSelection === ''}
+          >
+            {submitBusy ? t('adminBroadcastSending') : `➕ ${t('addQuestionToLevel')}`}
           </button>
         </form>
       )}
