@@ -1,37 +1,37 @@
-# Questify
+# Quesify
 
-Questify is a gamified learning platform for learning C# by playing a game.
+A game-based web app for learning programming languages by playing. Players move through a map of levels and answer programming questions to progress.
 
-## Folder Structure
+## Features
 
-```text
-Questify/
-├── frontend/    # React + Vite + Tailwind CSS UI
-└── backend/     # .NET Web API Backend
+- **Level map** – levels are shown on a map in a defined order
+- **Question system** – questions are loaded from an API and saved (persistence)
+- **Modal-based UI** – questions and results appear in clean pop-up windows
+- **Learn by playing** – game mechanics make practising programming languages more engaging
+
+## Tech Stack
+
+- React
+- JavaScript
+- REST API
+- HTML5, CSS3
+
+## Getting Started
+
+```bash
+git clone https://github.com/OmerMirzeyev/Quesify.git
+cd Quesify/Questify
+npm install
+npm run dev
 ```
 
-## Running the Application
+Then open the local address shown in the terminal (usually `http://localhost:5173`).
 
-### Frontend
-1. Navigate to the `frontend/` directory:
-   ```bash
-   cd frontend
-   ```
-2. Install dependencies:
-   ```bash
-   npm install
-   ```
-3. Run the development server:
-   ```bash
-   npm run dev
-   ```
+## Screenshots
 
-### Backend
-1. Navigate to the `backend/` directory:
-   ```bash
-   cd backend
-   ```
-2. Run the .NET Web API:
-   ```bash
-   dotnet run
-   ```
+<!-- Add 1-2 screenshots here by dragging images into the GitHub editor -->
+
+## Author
+
+**Omar Mirzayev** – designed and developed the project
+GitHub: [@OmerMirzeyev](https://github.com/OmerMirzeyev)
